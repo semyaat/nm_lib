@@ -32,7 +32,9 @@ def deriv_dnw(xx, hh, **kwargs):
         The downwind 2nd order derivative of hh respect to xx. Last 
         grid point is ill (or missing) calculated. 
     """
-    ans = np.zeros(len(hh)-1)
+    ans = np.zeros(len(hh))
+
+    # TODO: Add the final point 
 
     for i in range(len(hh)-1): 
         delta_x = xx[i+1] - xx[i]
@@ -59,6 +61,10 @@ def order_conv(hh, hh2, hh4, **kwargs):
     `array` 
         The order of convergence.  
     """
+    # Slice arrays 
+    hh2 = hh2[::2]
+    hh4 = hh4[::4]
+    return np.ma.log2((hh4 - hh2) / (hh2 - hh))
    
 
 def deriv_4tho(xx, hh, **kwargs): 
@@ -82,7 +88,7 @@ def deriv_4tho(xx, hh, **kwargs):
 
 def step_adv_burgers(xx, hh, a, cfl_cut = 0.98, 
                     ddx = lambda x,y: deriv_dnw(x, y), **kwargs): 
-    r"""
+    """
     Right hand side of Burger's eq. where a can be a constant or a function that 
     depends on xx. 
 
@@ -110,10 +116,14 @@ def step_adv_burgers(xx, hh, a, cfl_cut = 0.98,
     `array` 
         Time interval.
         Right hand side of (u^{n+1}-u^{n})/dt = from burgers eq, i.e., x \frac{\partial u}{\partial x} 
-    """    
+    """
+    dt = cfl_adv_burger(a, xx)*cfl_cut
+    rhs = -a*ddx(xx, hh)
+
+    return dt, rhs
 
 
-def cfl_adv_burger(a,x): 
+def cfl_adv_burger(a, x): 
     """
     Computes the dt_fact, i.e., Courant, Fredrich, and 
     Lewy condition for the advective term in the Burger's eq. 
@@ -130,6 +140,8 @@ def cfl_adv_burger(a,x):
     `float`
         min(dx/|a|)
     """
+    dx = np.diff(x)    # x[1] - x[0]
+    return np.min(dx/np.abs(a))
 
 
 def evolv_adv_burgers(xx, hh, nt, a, cfl_cut = 0.98, 
@@ -171,6 +183,30 @@ def evolv_adv_burgers(xx, hh, nt, a, cfl_cut = 0.98,
         all the elements of the domain. 
     """
 
+    t = np.zeros(nt)
+    unnt = np.zeros((len(xx), nt))
+    unnt[:,0] = hh 
+
+    for i in range(0, nt-1): 
+        dt, rhs = step_adv_burgers(xx, unnt[:, i], a, cfl_cut=cfl_cut, ddx=ddx)
+
+        ## Computes u(t+1)
+        unnt_temp = unnt[:, i] + rhs*dt 
+
+        ## Set the boundaries 
+        if bnd_limits[1] != 0: 
+            # downwind and central
+            unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]] 
+        else: 
+            # upwind
+            unnt1_temp = unnt_temp[bnd_limits[0]:] 
+
+        ## Updates in time 
+        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+        t[i+1]      = t[i] + dt 
+
+    return t, unnt
+
 
 def deriv_upw(xx, hh, **kwargs):
     r"""
@@ -189,7 +225,9 @@ def deriv_upw(xx, hh, **kwargs):
         The upwind 2nd order derivative of hh respect to xx. First 
         grid point is ill calculated. 
     """
-    
+     # TODO: Add point 
+    return (hh - np.roll(hh, 1)) / (xx - np.roll(xx, 1))
+
 
 def deriv_cent(xx, hh, **kwargs):
     r"""
@@ -208,6 +246,9 @@ def deriv_cent(xx, hh, **kwargs):
         The centered 2nd order derivative of hh respect to xx. First 
         and last grid points are ill calculated. 
     """
+
+    unn = (np.roll(hh, -1) - np.roll(hh, 1)) / (2*(xx - np.roll(xx, 1)))    
+    return unn
 
 
 def evolv_uadv_burgers(xx, hh, nt, cfl_cut = 0.98, 
@@ -247,6 +288,32 @@ def evolv_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
         Spatial and time evolution of u^n_j for n = (0,nt), and where j represents
         all the elements of the domain. 
     """
+    t = np.zeros(nt)
+    unnt = np.zeros((len(xx), nt))
+    unnt[:,0] = hh 
+
+    for i in range(0, nt-1): 
+        dt, rhs = step_uadv_burgers(xx, unnt[:, i], cfl_cut=cfl_cut, ddx=ddx)
+
+        ## Computes u(t+1)
+        unnt_temp = unnt[:, i] + rhs*dt 
+
+        ## Set the boundaries 
+        if bnd_limits[1] != 0: 
+            # downwind and central
+            unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]] 
+        # elif bnd_limits[0] == 1 and bnd_limits[1] == 1: 
+        #     # central 
+        #     continue 
+        else: 
+            # upwind
+            unnt1_temp = unnt_temp[bnd_limits[0]:] 
+
+        ## Updates in time 
+        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+        t[i+1]      = t[i] + dt 
+
+    return t, unnt
 
 
 def evolv_Lax_uadv_burgers(xx, hh, nt, cfl_cut = 0.98, 
@@ -361,7 +428,12 @@ def step_uadv_burgers(xx, hh, cfl_cut = 0.98,
         time interval
     unnt : `array`
         right hand side of (u^{n+1}-u^{n})/dt = from burgers eq, i.e., x \frac{\partial u}{\partial x} 
-    """       
+    """
+    a = xx
+    dt = cfl_adv_burger(a, xx)*cfl_cut
+    rhs = -a*ddx(xx, hh)
+
+    return dt, rhs 
 
 
 def cfl_diff_burger(a,x): 
@@ -381,6 +453,33 @@ def cfl_diff_burger(a,x):
     `float`
         min(dx/|a|)
     """
+    dx = np.diff(x)    # x[1] - x[0]
+    return np.min(dx/np.abs(a))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def ops_Lax_LL_Add(xx, hh, nt, a, b, cfl_cut = 0.98, 
