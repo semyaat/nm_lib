@@ -3,11 +3,28 @@ from nm_lib import nm_lib as nm
 
 x0 = -2.6 
 xf =  2.6 
-xx = np.linspace(x0, xf, 256)
+
+nint = 256
+nump = nint - 1
+xx = np.arange(nump)/(nump-1.0) * (xf - x0) + x0
 
 
 def u(x, t=False): 
-    """ Equation 2: Initial condition for t=t0 when a = const """ 
+    """ 
+    Solves the initial condition for u(x, t=t0) from equation 2). 
+    Valid when a = const 
+
+    Parameters
+    ----------
+    x : `array`
+       Spatial axis. 
+    t : `bool`
+       
+    Returns
+    ------- 
+    `array`
+        Initial condition of u(x, t=t0)
+    """
     return np.cos(6*np.pi*x / 5)**2 / (np.cosh(5*x**3))
 
 def u_exact(x, t, a): 
@@ -23,7 +40,7 @@ def u_exact(x, t, a):
     x : `array`
        Spatial axis. 
     t : `array`
-        TODO: Unsure if this is needed but i thinkkk so 
+        Time axis. 
     a : `float` or `array`
         Either constant, or array which multiply the right hand side of the Burger's eq.
 
@@ -37,18 +54,20 @@ def u_exact(x, t, a):
     x_tmp = np.zeros((len(x), len(t)))
 
     for i in range(0, len(t)): 
-        # Sets boundaries using mod 
-        #xx = np.arange(nump)/(nump-1.0) * (xf - x0) + x0
+        # Sets boundaries using mod (bring solution back into domain)
+        # Taking mod of the length of the grid (2.6) returns the remainder of the divide 
+        # -> The right column and row         
         x_tmp[:,i] = ((x - a*t[i]) - x0) % (xf - x0) + x0 
+
+        # Insert into u0
         xx[:,i]    = u(x_tmp[:,i]) # u0(x-at)
     return xx
 
 def test_ex_2b():
     a = -1
-    cfl_cut = 0.98
     nt = 200
 
-    t, unnt = nm.evolv_adv_burgers(xx, u(xx), nt, a, cfl_cut)
+    t, unnt = nm.evolv_adv_burgers(xx, u(xx), nt, a)
     unnt_exact = u_exact(xx, t, a)
 
     # Assert that diff between analytical and numerical are good 
