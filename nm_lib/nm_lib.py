@@ -34,8 +34,6 @@ def deriv_dnw(xx, hh, **kwargs):
     """
     ans = np.zeros(len(hh))
 
-    # TODO: Add the final point 
-
     for i in range(len(hh)-1): 
         delta_x = xx[i+1] - xx[i]
         delta_h = hh[i+1] - hh[i]
@@ -247,7 +245,7 @@ def deriv_cent(xx, hh, **kwargs):
         and last grid points are ill calculated. 
     """
 
-    unn = (np.roll(hh, -1) - np.roll(hh, 1)) / (2*(xx - np.roll(xx, 1)))    
+    unn = (np.roll(hh, -1) - np.roll(hh, 1)) / (2*(xx - np.roll(xx, 1)))
     return unn
 
 
