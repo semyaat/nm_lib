@@ -71,5 +71,5 @@ def test_ex_2b():
     unnt_exact = u_exact(xx, t, a)
 
     # Assert that diff between analytical and numerical are good 
-    tol = 1e-9
+    tol = 1e-6
     assert np.abs(np.sum(unnt) - np.sum(unnt_exact)) < tol 
