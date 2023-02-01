@@ -86,7 +86,7 @@ def deriv_4tho(xx, hh, **kwargs):
 
 def step_adv_burgers(xx, hh, a, cfl_cut = 0.98, 
                     ddx = lambda x,y: deriv_dnw(x, y), **kwargs): 
-    """
+    r"""
     Right hand side of Burger's eq. where a can be a constant or a function that 
     depends on xx. 
 
