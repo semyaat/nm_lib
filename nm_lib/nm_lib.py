@@ -354,11 +354,11 @@ def evolv_Lax_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
     unnt = np.zeros((len(xx), nt))
     unnt[:,0] = hh 
 
-    for i in range(0, nt-1): 
+    for i in range(nt-1): 
         dt, rhs = step_uadv_burgers(xx, unnt[:, i], cfl_cut=cfl_cut, ddx=ddx)
 
         ## Computes u(t+1)
-        unnt_temp = unnt[:, i] + rhs*dt 
+        # unnt_temp = unnt[:, i] + rhs*dt 
 
 
         # for i in range(len(hh)-1): 
@@ -366,10 +366,7 @@ def evolv_Lax_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
 
         # unnt_temp = unnt[:, i] + rhs*dt 
 
-
-
-
-        # unnt_temp = 0.5*(unnt[:, i+1] + unnt[:, i-1]) + rhs*dt 
+        unnt_temp = 0.5*(unnt[2:] + unnt[:-2]) + rhs*dt 
 
 
         ## Set the boundaries 
