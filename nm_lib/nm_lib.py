@@ -12,7 +12,7 @@ import os
 
 # import external public "common" modules
 import numpy as np
-import matplotlib.pyplot as plt 
+# import matplotlib.pyplot as plt 
 
 
 def deriv_dnw(xx, hh, **kwargs):
@@ -144,6 +144,8 @@ def cfl_adv_burger(a, x):
         min(dx/|a|)
     """
     dx = np.diff(x)    # x[1] - x[0]
+    if len(a) > 1:
+        a = a[:-1] 
     return np.min(dx/np.abs(a))
 
 
@@ -354,7 +356,11 @@ def evolv_Lax_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
     unnt[:,0] = hh 
 
     for i in range(nt-1): 
-        dt, rhs = step_uadv_burgers(xx, unnt[:, i], cfl_cut=cfl_cut, ddx=ddx)
+        if 'a' in kwargs: 
+            dt, rhs = step_uadv_burgers(xx, unnt[:, i], cfl_cut=cfl_cut, ddx=ddx, \
+                a = kwargs['a'])
+        else: 
+            dt, rhs = step_uadv_burgers(xx, unnt[:, i], cfl_cut=cfl_cut, ddx=ddx)
         dx = xx[1] - xx[0]
 
         ## Computes u(t+1)
@@ -451,7 +457,10 @@ def step_uadv_burgers(xx, hh, cfl_cut = 0.98,
     unnt : `array`
         right hand side of (u^{n+1}-u^{n})/dt = from burgers eq, i.e., x \frac{\partial u}{\partial x} 
     """
-    a = hh
+    if 'a' in kwargs: 
+        a = kwargs['a']
+    else: 
+        a = hh
     dt = cfl_diff_burger(a[:-1], xx)*cfl_cut
     rhs = -a*ddx(xx, hh)
     return dt, rhs 
@@ -479,24 +488,77 @@ def cfl_diff_burger(a,x):
 
 
 
+def evolv_Rie_uadv_burgers(xx, hh, nt, cfl_cut = 0.98, 
+        ddx = lambda x,y: deriv_dnw(x, y), 
+        bnd_type='wrap', bnd_limits=[0,1], **kwargs):
+    r"""
+    Advance nt time-steps in time the burger eq for a being u using the Rie method.
+
+    Requires
+    -------- 
+    step_uadv_burgers
+
+    Parameters
+    ----------
+    xx : `array`
+        Spatial axis. 
+    hh : `array`
+        Function that depends on xx.
+    cfl_cut : `array`
+        Constant value to limit dt from cfl_adv_burger. 
+        By default 0.98
+    ddx : `array`
+        Lambda function allows to change the space derivative function.
+        By derault  lambda x,y: deriv_dnw(x, y)
+    bnd_type : `string`
+        It allows to select the type of boundaries 
+    bnd_limits : `list(int)`
+        List of two integer elements. The number of pixels that
+        will need to be updated with the boundary information. 
+        By default [0,1]
+
+    Returns
+    -------
+    t : `array`
+        Time 1D array
+    unnt : `array`
+        Spatial and time evolution of u^n_j for n = (0,nt), and where j represents
+        all the elements of the domain. 
+    """
+    t = np.zeros(nt)
+    unnt = np.zeros((len(xx), nt))
+    unnt[:,0] = hh 
+
+    for i in range(nt-1): 
+        if 'a' in kwargs: 
+            dt, rhs = step_uadv_burgers(xx, unnt[:, i], cfl_cut=cfl_cut, ddx=ddx, \
+                a = kwargs['a'])
+        else: 
+            dt, rhs = step_uadv_burgers(xx, unnt[:, i], cfl_cut=cfl_cut, ddx=ddx)
+        dx = xx[1] - xx[0]
+
+        ## Computes u(t+1)
+
+        
 
 
+        # unn1 = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) 
+        # unn2 = dt*unnt[:, i]/(2*dx) *(np.roll(unnt[:,i], -1) - np.roll(unnt[:,i], 1)) 
+        # unnt_temp = unn1 - unn2
 
+        ## Set the boundaries 
+        if bnd_limits[1] > 0: 
+            # downwind and central
+            unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]] 
+        else: 
+            # upwind
+            unnt1_temp = unnt_temp[bnd_limits[0]:] 
 
+        ## Updates in time 
+        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+        t[i+1]      = t[i] + dt 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
+    return t, unnt
 
 
 
@@ -650,7 +712,6 @@ def ops_Lax_LL_Strang(xx, hh, nt, a, b, cfl_cut = 0.98,
         Spatial and time evolution of u^n_j for n = (0,nt), and where j represents
         all the elements of the domain. 
     """
-
 
 
 def osp_Lax_LH_Strang(xx, hh, nt, a, b, cfl_cut = 0.98, 
@@ -858,7 +919,6 @@ def Newton_Raphson(xx, hh, a, dt, nt, toll= 1e-5, ncount=2,
         unnt[:,it] = un
         
     return t, unnt, errt, countt
-
 
 
 def NR_f_u(xx, un, uo, dt, **kwargs): 
