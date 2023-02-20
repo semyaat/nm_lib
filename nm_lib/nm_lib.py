@@ -144,7 +144,7 @@ def cfl_adv_burger(a, x):
         min(dx/|a|)
     """
     dx = np.diff(x)    # x[1] - x[0]
-    if len(a) > 1:
+    if np.size(a) > 1:
         a = a[:-1] 
     return np.min(dx/np.abs(a))
 
@@ -488,6 +488,8 @@ def cfl_diff_burger(a,x):
 
 
 
+
+
 def evolv_Rie_uadv_burgers(xx, hh, nt, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
         bnd_type='wrap', bnd_limits=[0,1], **kwargs):
@@ -528,31 +530,33 @@ def evolv_Rie_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
     t = np.zeros(nt)
     unnt = np.zeros((len(xx), nt))
     unnt[:,0] = hh 
+    dx = xx[1] - xx[0]
 
     for i in range(nt-1): 
-        if 'a' in kwargs: 
-            dt, rhs = step_uadv_burgers(xx, unnt[:, i], cfl_cut=cfl_cut, ddx=ddx, \
-                a = kwargs['a'])
-        else: 
-            dt, rhs = step_uadv_burgers(xx, unnt[:, i], cfl_cut=cfl_cut, ddx=ddx)
-        dx = xx[1] - xx[0]
+        ## Computes the left and right of u 
+        uL = unnt[:,i] # x < 0 u[i]
+        # uR = unnt[:,i+1] # x > 0 u[i+1] # why does this not work???  
+        uR = np.roll(unnt[:,i], -1)
+
+        ## Compute the flux FL and FR 
+        FL = 0.5*uL**2
+        FR = 0.5*uR**2
+
+        ## Compute the propagation speed v_a 
+        v_a = np.max(np.array([np.abs(uL), np.abs(uR)]), axis=0)
+
+        halfstep = 0.5*(FL + FR) - 0.5*v_a*(uR - uL)
+        rhs = ( halfstep - np.roll(halfstep, 1) ) / dx 
+        dt = cfl_diff_burger(v_a[:-1], xx)
 
         ## Computes u(t+1)
-
-        
-
-
-        # unn1 = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) 
-        # unn2 = dt*unnt[:, i]/(2*dx) *(np.roll(unnt[:,i], -1) - np.roll(unnt[:,i], 1)) 
-        # unnt_temp = unn1 - unn2
+        unnt_temp = unnt[:, i] - rhs*dt
 
         ## Set the boundaries 
         if bnd_limits[1] > 0: 
-            # downwind and central
-            unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]] 
+            unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
         else: 
-            # upwind
-            unnt1_temp = unnt_temp[bnd_limits[0]:] 
+            unnt1_temp = unnt_temp[bnd_limits[0]:]                # upwind
 
         ## Updates in time 
         unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
@@ -561,9 +565,97 @@ def evolv_Rie_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
     return t, unnt
 
 
+def evolv_RieLax_uadv_burgers(xx, hh, nt, cfl_cut = 0.98, 
+        ddx = lambda x,y: deriv_dnw(x, y), 
+        bnd_type='wrap', bnd_limits=[0,1], **kwargs):
+    r"""
+    Advance nt time-steps in time the burger eq for a being u using the Rie method.
 
+    Requires
+    -------- 
+    step_uadv_burgers
 
+    Parameters
+    ----------
+    xx : `array`
+        Spatial axis. 
+    hh : `array`
+        Function that depends on xx.
+    cfl_cut : `array`
+        Constant value to limit dt from cfl_adv_burger. 
+        By default 0.98
+    ddx : `array`
+        Lambda function allows to change the space derivative function.
+        By derault  lambda x,y: deriv_dnw(x, y)
+    bnd_type : `string`
+        It allows to select the type of boundaries 
+    bnd_limits : `list(int)`
+        List of two integer elements. The number of pixels that
+        will need to be updated with the boundary information. 
+        By default [0,1]
 
+    Returns
+    -------
+    t : `array`
+        Time 1D array
+    unnt : `array`
+        Spatial and time evolution of u^n_j for n = (0,nt), and where j represents
+        all the elements of the domain. 
+    """
+    t = np.zeros((nt))
+    unnt = np.zeros((len(xx), nt))
+    unnt[:, 0] = hh
+    dx = xx[1] - xx[0]
+
+    for i in range(0, nt-1): 
+        ## FLUX RIE
+        ## Computes the left and right of u 
+        # uL = unnt[:,i] # x < 0 u[i]
+        uL = np.roll(unnt[:,i], 0)
+        uR = np.roll(unnt[:,i], -1)
+
+        ## Compute the flux FL and FR 
+        FL = 0.5*uL**2
+        FR = 0.5*uR**2
+
+        ## Compute the propagation speed v_a 
+        # v_a = np.max(np.array([np.abs(uL), np.abs(uR)]), axis=0)
+        v_a = np.maximum(np.abs(uL), np.abs(uR))
+        dt = cfl_diff_burger(v_a[:-1], xx)
+
+        f_rie = 0.5*(FL + FR) - 0.5*v_a*(uR - uL)
+
+        ## FLUX LAX
+        unn1 = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) 
+        unn2 = dt*unnt[:, i]/(2*dx) *(np.roll(unnt[:,i], -1) - np.roll(unnt[:,i], 1)) 
+        f_lax = unn1 - unn2
+
+        ## Flux limiter
+        r = (unnt[:,i] - unnt[:,i-1]) / (unnt[:,i+1] - unnt[:,i])
+        thetas = np.array([1., 2.])
+        mins = np.zeros((len(thetas), len(r)))
+        for j, theta in enumerate(thetas):
+            mins[j] = np.min(( np.min(theta*r), np.min((1. + r)/2.), theta ))
+        phi = np.max((0, np.max(mins)))
+
+        ## TOTAL FLUX 
+        f = f_rie + phi * (f_lax - f_rie)
+        rhs = (f - np.roll(f, 1))
+        
+        ## Computes u(t+1)
+        unnt_temp = unnt[:, i] - rhs*dt / dx
+
+        ## Set the boundaries 
+        if bnd_limits[1] > 0: 
+            unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
+        else: 
+            unnt1_temp = unnt_temp[bnd_limits[0]:]                # upwind
+
+        ## Updates in time 
+        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+        t[i+1]      = t[i] + dt 
+
+    return t, unnt
 
 def ops_Lax_LL_Add(xx, hh, nt, a, b, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
@@ -613,6 +705,10 @@ def ops_Lax_LL_Add(xx, hh, nt, a, b, cfl_cut = 0.98,
         Spatial and time evolution of u^n_j for n = (0,nt), and where j represents
         all the elements of the domain. 
     """
+    t = np.zeros(nt)
+    unnt = np.zeros((len(xx), nt))
+    unnt[:,0] = hh
+
 
 
 def ops_Lax_LL_Lie(xx, hh, nt, a, b, cfl_cut = 0.98, 
@@ -764,6 +860,20 @@ def osp_Lax_LH_Strang(xx, hh, nt, a, b, cfl_cut = 0.98,
     """
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def step_diff_burgers(xx, hh, a, ddx = lambda x,y: deriv_cent(x, y), **kwargs): 
     r"""
     Right hand side of the diffusive term of Burger's eq. where nu can be a constant or a function that 
@@ -785,8 +895,12 @@ def step_diff_burgers(xx, hh, a, ddx = lambda x,y: deriv_cent(x, y), **kwargs):
     -------
     `array`
         Right hand side of (u^{n+1}-u^{n})/dt = from burgers eq, i.e., x \frac{\partial u}{\partial x} 
-    """    
-
+    """
+    dt = cfl_diff_burger(a[:-1], xx)
+    rhs = -a*ddx(xx, hh)
+    # Applying upwind then downwind ?? By putting upwind into downwind? maybe?
+    # rhs = -a * deriv_dnw(xx, deriv_upw(xx, hh, **kwargs), **kwargs) # XXX 
+    return dt, rhs 
 
 def NR_f(xx, un, uo, a, dt, **kwargs): 
     r"""
@@ -809,8 +923,10 @@ def NR_f(xx, un, uo, a, dt, **kwargs):
     -------
     `array`
         function  u^{n+1}_{j}-u^{n}_{j} - a (u^{n+1}_{j+1} - 2 u^{n+1}_{j} -u^{n+1}_{j-1}) dt
-    """    
-
+    """
+    # dx = np.roll(xx, -1) - xx
+    dx = xx[1] - xx[0]
+    return un - uo - a*(np.roll(un, -1) - 2*un + np.roll(un, 1)) * dt / (dx**2)
 
 def jacobian(xx, un, a, dt, **kwargs): 
     r"""
@@ -831,7 +947,15 @@ def jacobian(xx, un, a, dt, **kwargs):
     -------
     `array`
         Jacobian F_j'(u^{n+1}{k})
-    """    
+    """
+    jacob = np.zeros((len(un), len(un)))
+    dx = xx[1] - xx[0]
+    for i in range(len(un)):
+        jacob[i, i] = 1 - a*dt/(dx**2)
+        jacob[i, (i+1)%len(un)] = a*dt/(dx**2)
+        jacob[i, (i-1)%len(un)] = a*dt/(dx**2)
+    return jacob
+
 
 
 def Newton_Raphson(xx, hh, a, dt, nt, toll= 1e-5, ncount=2, 
@@ -942,7 +1066,10 @@ def NR_f_u(xx, un, uo, dt, **kwargs):
     -------
     `array`
         function  u^{n+1}_{j}-u^{n}_{j} - a (u^{n+1}_{j+1} - 2 u^{n+1}_{j} -u^{n+1}_{j-1}) dt
-    """    
+    """
+    # dx = np.roll(xx, -1) - xx
+    dx = xx[1] - xx[0]
+    return un - uo - a*(np.roll(un, -1) - 2*un - np.roll(un, 1)) * dt / (dx**2)
 
 
 def jacobian_u(xx, un, dt, **kwargs): 
@@ -1172,4 +1299,3 @@ def hyman_pred(f, fold, dfdt, a1, b1, a2, b2):
     f = tempvar
     
     return f, fold, fsav
-
