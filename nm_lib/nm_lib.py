@@ -490,6 +490,7 @@ def cfl_diff_burger(a,x):
 
 
 
+
 def evolv_Rie_uadv_burgers(xx, hh, nt, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
         bnd_type='wrap', bnd_limits=[0,1], **kwargs):
@@ -564,7 +565,6 @@ def evolv_Rie_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
 
     return t, unnt
 
-
 def evolv_RieLax_uadv_burgers(xx, hh, nt, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
         bnd_type='wrap', bnd_limits=[0,1], **kwargs):
@@ -619,8 +619,7 @@ def evolv_RieLax_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
         FR = 0.5*uR**2
 
         ## Compute the propagation speed v_a 
-        # v_a = np.max(np.array([np.abs(uL), np.abs(uR)]), axis=0)
-        v_a = np.maximum(np.abs(uL), np.abs(uR))
+        v_a = np.max(np.array([np.abs(uL), np.abs(uR)]), axis=0)
         dt = cfl_diff_burger(v_a[:-1], xx)
 
         f_rie = 0.5*(FL + FR) - 0.5*v_a*(uR - uL)
@@ -656,6 +655,11 @@ def evolv_RieLax_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
         t[i+1]      = t[i] + dt 
 
     return t, unnt
+
+
+
+
+
 
 def ops_Lax_LL_Add(xx, hh, nt, a, b, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
@@ -709,6 +713,29 @@ def ops_Lax_LL_Add(xx, hh, nt, a, b, cfl_cut = 0.98,
     unnt = np.zeros((len(xx), nt))
     unnt[:,0] = hh
 
+    for i in range(nt-1):
+        dt_u, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        dt_v, rhs_v = step_adv_burgers(xx, unnt[:,i], b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+
+        # Select minimum timestep 
+        dt = np.min([dt_u, dt_v])
+
+        ## Compute u(t+1)
+        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt
+        vnn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_v*dt
+        unnt_temp = unn + vnn - unnt[:,i]
+
+        ## Set the boundaries
+        if bnd_limits[1] > 0: 
+            unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
+        else: 
+            unnt1_temp = unnt_temp[bnd_limits[0]:]                # upwind
+        
+        ## Update in time 
+        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+        t[i+1]      = t[i] + dt 
+
+        return t, unnt
 
 
 def ops_Lax_LL_Lie(xx, hh, nt, a, b, cfl_cut = 0.98, 
@@ -758,7 +785,30 @@ def ops_Lax_LL_Lie(xx, hh, nt, a, b, cfl_cut = 0.98,
         Spatial and time evolution of u^n_j for n = (0,nt), and where j represents
         all the elements of the domain. 
     """
+    t = np.zeros(nt)
+    unnt = np.zeros((len(xx), nt))
+    unnt[:,0] = hh
 
+    for i in range(nt-1):
+        dt_u, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt_u
+
+        # v(t^n) = u(t^n+1)
+        dt, rhs_v = step_adv_burgers(xx, unn, b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        vnn = 0.5*(np.roll(unn, -1) + np.roll(unn, 1)) + rhs_v*dt
+
+        ## Set the boundaries
+        unnt_temp = vnn
+        if bnd_limits[1] > 0: 
+            unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
+        else: 
+            unnt1_temp = unnt_temp[bnd_limits[0]:]                # upwind
+        
+        ## Update in time 
+        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+        t[i+1]      = t[i] + dt 
+
+        return t, unnt
 
 def ops_Lax_LL_Strang(xx, hh, nt, a, b, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
@@ -808,7 +858,35 @@ def ops_Lax_LL_Strang(xx, hh, nt, a, b, cfl_cut = 0.98,
         Spatial and time evolution of u^n_j for n = (0,nt), and where j represents
         all the elements of the domain. 
     """
+    t = np.zeros(nt)
+    unnt = np.zeros((len(xx), nt))
+    unnt[:,0] = hh
 
+    for i in range(nt-1):
+        dt = cfl_adv_burger(a, xx) # need common timestep??? maybe
+
+        dt_u, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt_u*0.5 #half a timestep
+
+        # v(t^n) = u(t^n+1)
+        dt_v, rhs_v = step_adv_burgers(xx, unn, b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        vnn = 0.5*(np.roll(unn, -1) + np.roll(unn, 1)) + rhs_v*dt_v
+
+        dt_w, rhs_w = step_adv_burgers(xx, vnn, a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        wnn = 0.5*(np.roll(vnn, -1) + np.roll(vnn, 1)) + rhs_w*dt_w*0.5 #half a timestep
+
+        ## Set the boundaries
+        unnt_temp = wnn
+        if bnd_limits[1] > 0: 
+            unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
+        else: 
+            unnt1_temp = unnt_temp[bnd_limits[0]:]                # upwind
+        
+        ## Update in time 
+        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+        t[i+1]      = t[i] + dt 
+
+        return t, unnt
 
 def osp_Lax_LH_Strang(xx, hh, nt, a, b, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
@@ -956,8 +1034,6 @@ def jacobian(xx, un, a, dt, **kwargs):
         jacob[i, (i-1)%len(un)] = a*dt/(dx**2)
     return jacob
 
-
-
 def Newton_Raphson(xx, hh, a, dt, nt, toll= 1e-5, ncount=2, 
             bnd_type='wrap', bnd_limits=[1,1], **kwargs):
     r"""
@@ -1043,6 +1119,17 @@ def Newton_Raphson(xx, hh, a, dt, nt, toll= 1e-5, ncount=2,
         unnt[:,it] = un
         
     return t, unnt, errt, countt
+
+
+
+
+
+
+
+
+
+
+
 
 
 def NR_f_u(xx, un, uo, dt, **kwargs): 
@@ -1176,6 +1263,26 @@ def Newton_Raphson_u(xx, hh, dt, nt, toll= 1e-5, ncount=2,
         unnt[:,it] = un
         
     return t, unnt, errt, countt
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 def taui_sts(nu, niter, iiter): 
     """
