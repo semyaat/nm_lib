@@ -425,7 +425,28 @@ def evolv_Lax_adv_burgers(xx, hh, nt, a, cfl_cut = 0.98,
         Spatial and time evolution of u^n_j for n = (0,nt), and where j represents
         all the elements of the domain. 
     """
+    t = np.zeros(nt)
+    unnt = np.zeros((len(xx), nt))
+    unnt[:,0] = hh
 
+    for i in range(nt-1):
+        dt, rhs = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+
+        ## Compute u(t+1)
+        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs*dt
+        unnt_temp = unn - unnt[:,i]
+
+        ## Set the boundaries
+        if bnd_limits[1] > 0: 
+            unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
+        else: 
+            unnt1_temp = unnt_temp[bnd_limits[0]:]                # upwind
+        
+        ## Update in time 
+        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+        t[i+1]      = t[i] + dt 
+
+    return t, unnt
 
 def step_uadv_burgers(xx, hh, cfl_cut = 0.98, 
                     ddx = lambda x,y: deriv_dnw(x, y), **kwargs): 
@@ -630,7 +651,7 @@ def evolv_RieLax_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
         f_lax = unn1 - unn2
 
         ## Flux limiter
-        r = (unnt[:,i] - unnt[:,i-1]) / (unnt[:,i+1] - unnt[:,i])
+        r = (unnt[:,i] - unnt[:,i-1]) / (unnt[:,i+1] + unnt[:,i])
         thetas = np.array([1., 2.])
         mins = np.zeros((len(thetas), len(r)))
         for j, theta in enumerate(thetas):
@@ -717,8 +738,7 @@ def ops_Lax_LL_Add(xx, hh, nt, a, b, cfl_cut = 0.98,
         dt_u, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
         dt_v, rhs_v = step_adv_burgers(xx, unnt[:,i], b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
 
-        # Select minimum timestep 
-        dt = np.min([dt_u, dt_v])
+        dt = dt_v - dt_u
 
         ## Compute u(t+1)
         unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt
@@ -735,7 +755,7 @@ def ops_Lax_LL_Add(xx, hh, nt, a, b, cfl_cut = 0.98,
         unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
         t[i+1]      = t[i] + dt 
 
-        return t, unnt
+    return t, unnt
 
 
 def ops_Lax_LL_Lie(xx, hh, nt, a, b, cfl_cut = 0.98, 
@@ -808,7 +828,7 @@ def ops_Lax_LL_Lie(xx, hh, nt, a, b, cfl_cut = 0.98,
         unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
         t[i+1]      = t[i] + dt 
 
-        return t, unnt
+    return t, unnt
 
 def ops_Lax_LL_Strang(xx, hh, nt, a, b, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
@@ -886,7 +906,7 @@ def ops_Lax_LL_Strang(xx, hh, nt, a, b, cfl_cut = 0.98,
         unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
         t[i+1]      = t[i] + dt 
 
-        return t, unnt
+    return t, unnt
 
 def osp_Lax_LH_Strang(xx, hh, nt, a, b, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
@@ -936,7 +956,43 @@ def osp_Lax_LH_Strang(xx, hh, nt, a, b, cfl_cut = 0.98,
         Spatial and time evolution of u^n_j for n = (0,nt), and where j represents
         all the elements of the domain. 
     """
+    t = np.zeros(nt)
+    unnt = np.zeros((len(xx), nt))
+    unnt[:,0] = hh
 
+    for i in range(nt-1):
+        dt = cfl_adv_burger(a, xx) # need common timestep??? maybe
+
+        dt_u, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt_u*0.5 #half a timestep
+
+        # v(t^n) = u(t^n+1)
+        dt_v, rhs_v = step_adv_burgers(xx, unn, b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+
+        # Hyman predictor-corrector scheme
+        if i == 0:
+            unn, uold, dt_v = hyman(xx, unn, dt, b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        else:
+            unn, uold, dt_v = hyman(xx, unn, dt, b, cfl_cut = cfl_cut, ddx = ddx, fold = uold, dtold = dt_v, **kwargs)
+
+
+        vnn = 0.5*(np.roll(unn, -1) + np.roll(unn, 1)) + rhs_v*dt_v # full timestep 
+
+        dt_w, rhs_w = step_adv_burgers(xx, vnn, a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        wnn = 0.5*(np.roll(vnn, -1) + np.roll(vnn, 1)) + rhs_w*dt_w*0.5 #half a timestep
+
+        ## Set the boundaries
+        unnt_temp = wnn
+        if bnd_limits[1] > 0: 
+            unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
+        else: 
+            unnt1_temp = unnt_temp[bnd_limits[0]:]                # upwind
+        
+        ## Update in time 
+        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+        t[i+1]      = t[i] + dt 
+
+    return t, unnt
 
 
 
