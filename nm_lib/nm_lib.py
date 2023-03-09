@@ -62,7 +62,7 @@ def order_conv(hh, hh2, hh4, **kwargs):
     # Slice arrays 
     hh2 = hh2[::2]
     hh4 = hh4[::4]
-    return np.ma.log2((hh4 - hh2) / (hh2 - hh))
+    return np.ma.log2((hh4[:-1] - hh2[:-1]) / (hh2[:-1] - hh))
    
 
 def deriv_4tho(xx, hh, **kwargs): 
@@ -970,9 +970,9 @@ def osp_Lax_LH_Strang(xx, hh, nt, a, b, cfl_cut = 0.98,
         dt_v, rhs_v = step_adv_burgers(xx, unn, b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
 
         # Hyman predictor-corrector scheme
-        if i == 0:
+        if i == 0: # First step 
             unn, uold, dt_v = hyman(xx, unn, dt, b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
-        else:
+        else: # The rest of the steps 
             unn, uold, dt_v = hyman(xx, unn, dt, b, cfl_cut = cfl_cut, ddx = ddx, fold = uold, dtold = dt_v, **kwargs)
 
 
@@ -1030,11 +1030,11 @@ def step_diff_burgers(xx, hh, a, ddx = lambda x,y: deriv_cent(x, y), **kwargs):
     `array`
         Right hand side of (u^{n+1}-u^{n})/dt = from burgers eq, i.e., x \frac{\partial u}{\partial x} 
     """
-    dt = cfl_diff_burger(a[:-1], xx)
-    rhs = -a*ddx(xx, hh)
+    # dt = cfl_diff_burger(a[:-1], xx)
+    # rhs = -a*ddx(xx, hh)
     # Applying upwind then downwind ?? By putting upwind into downwind? maybe?
-    # rhs = -a * deriv_dnw(xx, deriv_upw(xx, hh, **kwargs), **kwargs) # XXX 
-    return dt, rhs 
+    return -a*ddx(xx, hh)
+    # return -a * deriv_dnw(xx, deriv_upw(xx, hh, **kwargs), **kwargs) # XXX 
 
 def NR_f(xx, un, uo, a, dt, **kwargs): 
     r"""
@@ -1045,9 +1045,9 @@ def NR_f(xx, un, uo, a, dt, **kwargs):
     xx : `array`
         Spatial axis. 
     un : `array`
-        Function that depends on xx.
+        Function that depends on xx. (u_new)
     uo : `array`
-        Function that depends on xx.
+        Function that depends on xx. (u_original)
     a : `float` or `array`
         Either constant, or array which multiply the right hand side of the Burger's eq.
     dt : `float` 
@@ -1058,9 +1058,9 @@ def NR_f(xx, un, uo, a, dt, **kwargs):
     `array`
         function  u^{n+1}_{j}-u^{n}_{j} - a (u^{n+1}_{j+1} - 2 u^{n+1}_{j} -u^{n+1}_{j-1}) dt
     """
-    # dx = np.roll(xx, -1) - xx
     dx = xx[1] - xx[0]
-    return un - uo - a*(np.roll(un, -1) - 2*un + np.roll(un, 1)) * dt / (dx**2)
+    return un - uo - a*(np.roll(un, -1) - 2*un - np.roll(un, 1)) * dt / (dx**2)
+
 
 def jacobian(xx, un, a, dt, **kwargs): 
     r"""
@@ -1082,15 +1082,17 @@ def jacobian(xx, un, a, dt, **kwargs):
     `array`
         Jacobian F_j'(u^{n+1}{k})
     """
-    jacob = np.zeros((len(un), len(un)))
     dx = xx[1] - xx[0]
-    for i in range(len(un)):
-        jacob[i, i] = 1 - a*dt/(dx**2)
-        jacob[i, (i+1)%len(un)] = a*dt/(dx**2)
-        jacob[i, (i-1)%len(un)] = a*dt/(dx**2)
-    return jacob
+    J = np.zeros((len(xx), len(xx)))
+    for i in range(len(xx)):
+        eps = dt # too big? 
+        un_pert = un.copy()
+        un_pert[i] += eps
+        F_perturbed = NR_f(xx, un_pert, un, a, dt, **kwargs)
+        J[:,i] = (F_perturbed - NR_f(xx, un, un[i-1], a, dt, **kwargs)) / eps
+    return J
 
-def Newton_Raphson(xx, hh, a, dt, nt, toll= 1e-5, ncount=2, 
+def Newton_Raphson(xx, hh, a, dt, nt, toll=1e-5, ncount=2, 
             bnd_type='wrap', bnd_limits=[1,1], **kwargs):
     r"""
     NR scheme for the burgers equation. 
