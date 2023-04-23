@@ -32,14 +32,7 @@ def deriv_dnw(xx, hh, **kwargs):
         The downwind 2nd order derivative of hh respect to xx. Last 
         grid point is ill (or missing) calculated. 
     """
-    ans = np.zeros(len(hh))
-
-    for i in range(len(hh)-1): 
-        delta_x = xx[i+1] - xx[i]
-        delta_h = hh[i+1] - hh[i]
-
-        ans[i] = delta_h / delta_x
-    return ans 
+    return (np.roll(hh, -1) - hh)/(np.roll(xx, -1) - xx)
 
 def deriv_upw(xx, hh, **kwargs):
     r"""
@@ -58,7 +51,6 @@ def deriv_upw(xx, hh, **kwargs):
         The upwind 2nd order derivative of hh respect to xx. First 
         grid point is ill calculated. 
     """
-     # TODO: Add point 
     return (hh - np.roll(hh, 1)) / (xx - np.roll(xx, 1))
 
 def deriv_cent(xx, hh, **kwargs):
@@ -82,7 +74,7 @@ def deriv_cent(xx, hh, **kwargs):
 
 
 ###################
-### EXERCISE 1b  ##
+### EXERCISE 1b ###
 ###################
 
 def order_conv(hh, hh2, hh4, **kwargs):
@@ -105,9 +97,7 @@ def order_conv(hh, hh2, hh4, **kwargs):
     # Slice arrays 
     hh2 = hh2[::2]
     hh4 = hh4[::4]
-    # missing the opertion (derivative of hh2 with respect to x and same for hh4 xxx)
-
-    return np.ma.log2((hh4[:-1] - hh2[:-1]) / (hh2[:-1] - hh))
+    return np.ma.log((hh4 - hh2)/(hh2 - hh))/np.log(2)
    
 def deriv_4tho(xx, hh, **kwargs): 
     """
@@ -126,10 +116,12 @@ def deriv_4tho(xx, hh, **kwargs):
         The centered 4th order derivative of hh respect to xx. 
         Last and first two grid points are ill calculated. 
     """
-    return 0 
+    return (-np.roll(hh, -2) + 8*np.roll(hh, -1) - 8*np.roll(hh, 1) + np.roll(hh, 2)) \
+            /(12*(np.roll(xx, -1) - xx))
+
 
 ###################
-### EXERCISE 2   ##
+### EXERCISE 2  ###
 ###################
 
 def step_adv_burgers(xx, hh, a, cfl_cut = 0.98, 
@@ -164,13 +156,7 @@ def step_adv_burgers(xx, hh, a, cfl_cut = 0.98,
         Right hand side of (u^{n+1}-u^{n})/dt = from burgers eq, i.e., x \frac{\partial u}{\partial x} 
     """
     dt = cfl_adv_burger(a, xx)*cfl_cut
-
-    # TODO: Test this way of ensuring boundary conditions 
-    if 'bnd_type' in kwargs and kwargs['bnd_type'] == 'wrap': 
-        hh = np.pad(hh, kwargs['bnd_limits'], 'wrap')
-
     rhs = -a*ddx(xx, hh)
-
     return dt, rhs
 
 def cfl_adv_burger(a, x): 
@@ -803,15 +789,21 @@ def ops_Lax_LL_Lie(xx, hh, nt, a, b, cfl_cut = 0.98,
     unnt[:,0] = hh
 
     for i in range(nt-1):
-        dt_u, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
-        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt_u
+        dt_u = cfl_adv_burger(a, xx) * cfl_cut
+        dt_v = cfl_adv_burger(b, xx) * cfl_cut
+
+        dt = np.min([dt_u, dt_v])
+
+        _, rhs_u = step_adv_burgers(xx, unnt[:,i], a=a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt
 
         # v(t^n) = u(t^n+1)
-        dt, rhs_v = step_adv_burgers(xx, unn, b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        _, rhs_v = step_adv_burgers(xx, unn, a=b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
         vnn = 0.5*(np.roll(unn, -1) + np.roll(unn, 1)) + rhs_v*dt
 
+
         ## Set the boundaries
-        unnt_temp = vnn
+        unnt_temp = unn + vnn - unnt[:,i]
         if bnd_limits[1] > 0: 
             unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
         else: 
@@ -876,14 +868,17 @@ def ops_Lax_LL_Strang(xx, hh, nt, a, b, cfl_cut = 0.98,
     unnt[:,0] = hh
 
     for i in range(nt-1):
-        dt = cfl_adv_burger(a, xx) # need common timestep??? maybe
+        dt_u = cfl_adv_burger(a, xx) * cfl_cut
+        dt_v = cfl_adv_burger(b, xx) * cfl_cut
 
-        dt_u, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
-        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt_u*0.5 #half a timestep
+        dt = np.min([dt_u, dt_v])
+
+        _, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt*0.5 #half a timestep
 
         # v(t^n) = u(t^n+1)
-        dt_v, rhs_v = step_adv_burgers(xx, unn, b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
-        vnn = 0.5*(np.roll(unn, -1) + np.roll(unn, 1)) + rhs_v*dt_v
+        _, rhs_v = step_adv_burgers(xx, unn[i], b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        vnn = 0.5*(np.roll(unn, -1) + np.roll(unn, 1)) + rhs_v*dt
 
         dt_w, rhs_w = step_adv_burgers(xx, vnn, a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
         wnn = 0.5*(np.roll(vnn, -1) + np.roll(vnn, 1)) + rhs_w*dt_w*0.5 #half a timestep
@@ -1014,8 +1009,10 @@ def step_diff_burgers(xx, hh, a, ddx = lambda x,y: deriv_cent(x, y), **kwargs):
         Right hand side of (u^{n+1}-u^{n})/dt = from burgers eq, i.e., x \frac{\partial u}{\partial x} 
     """
     # dt = cfl_diff_burger(a[:-1], xx)
-    # rhs = -a*ddx(xx, hh)
-    return a*(np.roll(hh, -1) - 2*hh - np.roll(hh, 1))
+    # rhs = a*(np.roll(hh, -1) - 2*hh - np.roll(hh, 1))
+
+    rhs = a*ddx(xx, hh)
+    return rhs 
 
 def NR_f(xx, un, uo, a, dt, **kwargs): 
     r"""
@@ -1285,6 +1282,7 @@ def Newton_Raphson_u(xx, hh, dt, nt, toll= 1e-5, ncount=2,
         
     return t, unnt, errt, countt
 
+
 ###################
 ### EXERCISE 5.3 ##
 ###################
@@ -1307,11 +1305,9 @@ def taui_sts(nu, niter, iiter):
     `float` 
         [(nu -1)cos(pi (2 iiter - 1) / 2 niter) + nu + 1]^{-1}
     """
-    # return ( (nu - 1)*np.cos(np.pi (2*iiter - 1) / (2*niter)) + nu + 1 )**(-1)
-    tau = ((nu - 1)*np.cos(np.pi*(2*iiter - 1)/(2*niter)) + nu + 1)**(-1)
-    return tau
+    return ( (nu - 1)*np.cos(np.pi*(2*iiter - 1) / (2*niter)) + nu + 1 )**(-1)
 
-def evol_sts(xx, hh, nt,  a, cfl_cut = 0.45, 
+def evol_sts(xx, hh, nt, a, cfl_cut = 0.45, 
         ddx = lambda x,y: deriv_cent(x, y), 
         bnd_type='wrap', bnd_limits=[0,1], nu=0.9, n_sts=10): 
     """
@@ -1360,24 +1356,46 @@ def evol_sts(xx, hh, nt,  a, cfl_cut = 0.45,
     unnt[:,0] = hh
 
     dx = xx[1] - xx[0]
-    diff = np.min(dx/np.abs(a))
-    dt = cfl_cut * np.min(dx**2 / (4*np.abs(a))) # From the cfl_cut found in 5a 
+    dt_cfl = cfl_cut * np.min(dx**2/(4*np.abs(a))) # From the cfl_cut found in 5a 
 
-    for i in range(nt-1):
+    tmp_u = np.zeros((len(xx), n_sts))
+    for i in range(nt-1): 
+        
+        un = unnt[:,i].copy()
         rhs = step_diff_burgers(xx, unnt[:,i], a, ddx)
+        taui = 0
+        dt_sts = 0
+        tmp_u[:,0] = unnt[:,i]
 
-        ## Compute u(t+1)
-        unnt_temp = unnt[:,i] + rhs * taui_sts(nu, n_sts, i+1) * dt
+        for ists in range(n_sts): 
+            # rhs = step_diff_burgers(xx, unnt[:,i], a, ddx)
+            rhs = step_diff_burgers(xx, hh, a, ddx)
+
+            # taui += taui_sts(nu, n_sts, ists+1)*dt_cfl
+            # dt_sts += taui
+            # un += rhs*taui
+            # rhs = step_diff_burgers(xx, unnt[:,i], a, ddx)
+
+            # Compute u(t+1)
+            tmp_u[:,ists] = hh + rhs*taui_sts(nu, n_sts, ists+1)*dt_cfl
+            hh = tmp_u[:,ists]
+
+            unnt_temp = tmp_u[:,ists]
+            # unnt_temp = unnt[:,j] + rhs*taui_sts(nu, n_sts, j+1) * delta_cfl
+        
+        unnt[:,i+1] = unnt[:,i] + rhs*dt_sts
+        unnt_temp = unnt[:,i+1]
 
         ## Set the boundaries
         if bnd_limits[1] > 0: 
             unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
         else: 
             unnt1_temp = unnt_temp[bnd_limits[0]:]                # upwind
-        
+
         ## Update in time 
         unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
-        t[i+1]      = t[i] + dt 
+        dt          = taui
+        t[i+1]      = t[i] + dt
 
     return t, unnt
 
@@ -1436,3 +1454,52 @@ def hyman_pred(f, fold, dfdt, a1, b1, a2, b2):
     f = tempvar
     
     return f, fold, fsav
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        # # Calculate the fluxes
+        # F_h = u*u
+        # F_m = u*u*u
+        # F_e = u*u*u + Pg
+
+        # # Calculate the right hand side of the equations
+        # ddx_h = ddx(xx, u)
+        # ddx_m = ddx(xx, u*u)
+        # ddx_e = ddx(xx, u*u + Pg)
+
+        # # Calculate the new values of the variables
+        # u = u - dt*ddx_h
+        # u = u - dt*ddx_m
+        # u = u - dt*ddx_e
