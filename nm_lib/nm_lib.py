@@ -1011,8 +1011,10 @@ def step_diff_burgers(xx, hh, a, ddx = lambda x,y: deriv_cent(x, y), **kwargs):
     # dt = cfl_diff_burger(a[:-1], xx)
     # rhs = a*(np.roll(hh, -1) - 2*hh - np.roll(hh, 1))
 
-    rhs = a*ddx(xx, hh)
-    return rhs 
+    dt = cfl_diff_burger(a, xx)
+    rhs = a * ddx(xx, ddx(xx, hh))
+    # rhs = a*ddx(xx, hh)
+    return dt, rhs 
 
 def NR_f(xx, un, uo, a, dt, **kwargs): 
     r"""
@@ -1287,6 +1289,13 @@ def Newton_Raphson_u(xx, hh, dt, nt, toll= 1e-5, ncount=2,
 ### EXERCISE 5.3 ##
 ###################
 
+def tau_sts(nu, n, dt_cfl): 
+    a = n / (2 * np.sqrt(nu))
+    b1 = (1 + np.sqrt(nu)) ** 2*n - (1 - np.sqrt(nu)) ** 2*n
+    b2 = (1 + np.sqrt(nu)) ** 2*n + (1 - np.sqrt(nu)) ** 2*n
+    dt_sts = a * (b1/b2) * dt_cfl
+    return dt_sts
+
 def taui_sts(nu, niter, iiter): 
     """
     STS parabolic scheme. [(nu -1)cos(pi (2 iiter - 1) / 2 niter) + nu + 1]^{-1}
@@ -1356,48 +1365,35 @@ def evol_sts(xx, hh, nt, a, cfl_cut = 0.45,
     unnt[:,0] = hh
 
     dx = xx[1] - xx[0]
-    dt_cfl = cfl_cut * np.min(dx**2/(4*np.abs(a))) # From the cfl_cut found in 5a 
+    tcfl = (dx**2)/a
+    tsts = []
 
-    tmp_u = np.zeros((len(xx), n_sts))
+    # tmp_u = np.zeros((len(xx), n_sts))
     for i in range(nt-1): 
-        
-        un = unnt[:,i].copy()
-        rhs = step_diff_burgers(xx, unnt[:,i], a, ddx)
-        taui = 0
-        dt_sts = 0
-        tmp_u[:,0] = unnt[:,i]
+        ts = []
+        unts = np.zeros((np.size(xx), n_sts))
+        unts[:, 0] = unnt[:,i]
 
-        for ists in range(n_sts): 
-            # rhs = step_diff_burgers(xx, unnt[:,i], a, ddx)
-            rhs = step_diff_burgers(xx, hh, a, ddx)
+        for ists in range(0, n_sts-1): 
+            dti = tcfl * taui_sts(nu, n_sts, ists)
+            dt, u1_temp = step_diff_burgers(xx, unts[:,ists], a, cfl_cut=cfl_cut , ddx=ddx)
 
-            # taui += taui_sts(nu, n_sts, ists+1)*dt_cfl
-            # dt_sts += taui
-            # un += rhs*taui
-            # rhs = step_diff_burgers(xx, unnt[:,i], a, ddx)
+            u1_temp = unts[:, ists] + u1_temp * dti
 
-            # Compute u(t+1)
-            tmp_u[:,ists] = hh + rhs*taui_sts(nu, n_sts, ists+1)*dt_cfl
-            hh = tmp_u[:,ists]
+             ## Set the boundaries
+            if bnd_limits[1] > 0: 
+                unnt1_temp = u1_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
+            else: 
+                unnt1_temp = u1_temp[bnd_limits[0]:]                # upwind
 
-            unnt_temp = tmp_u[:,ists]
-            # unnt_temp = unnt[:,j] + rhs*taui_sts(nu, n_sts, j+1) * delta_cfl
-        
-        unnt[:,i+1] = unnt[:,i] + rhs*dt_sts
-        unnt_temp = unnt[:,i+1]
+            unts[:, ists+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+            unntmp = unts[:, ists+1]
+            ts.append(dti)
+        tsts.append(ts)
+        unnt[:, i+1] = unntmp
+        t[i+1] = t[i] + np.sum(ts)
 
-        ## Set the boundaries
-        if bnd_limits[1] > 0: 
-            unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
-        else: 
-            unnt1_temp = unnt_temp[bnd_limits[0]:]                # upwind
-
-        ## Update in time 
-        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
-        dt          = taui
-        t[i+1]      = t[i] + dt
-
-    return t, unnt
+    return t, unnt, tsts
 
 def hyman(xx, f, dth, a, fold=None, dtold=None,
         cfl_cut=0.8, ddx = lambda x,y: deriv_dnw(x, y), 
@@ -1454,7 +1450,6 @@ def hyman_pred(f, fold, dfdt, a1, b1, a2, b2):
     f = tempvar
     
     return f, fold, fsav
-
 
 
 
