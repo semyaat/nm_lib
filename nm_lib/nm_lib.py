@@ -1375,7 +1375,8 @@ def evol_sts(xx, hh, nt, a, cfl_cut = 0.45,
         unts[:, 0] = unnt[:,i]
 
         for ists in range(0, n_sts-1): 
-            dti = tcfl * taui_sts(nu, n_sts, ists)
+            # ists -> taui_sts will be zero for the first iteration.
+            dti = tcfl * taui_sts(nu, n_sts, ists+1) # taui_sts needs a non-zero integer 
             dt, u1_temp = step_diff_burgers(xx, unts[:,ists], a, cfl_cut=cfl_cut , ddx=ddx)
 
             u1_temp = unts[:, ists] + u1_temp * dti
