@@ -72,7 +72,6 @@ def deriv_cent(xx, hh, **kwargs):
     """
     return (np.roll(hh, -1) - np.roll(hh, 1)) / (np.roll(xx, -1) - np.roll(xx, 1))
 
-
 ###################
 ### EXERCISE 1b ###
 ###################
@@ -1453,49 +1452,3 @@ def hyman_pred(f, fold, dfdt, a1, b1, a2, b2):
     return f, fold, fsav
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-        # # Calculate the fluxes
-        # F_h = u*u
-        # F_m = u*u*u
-        # F_e = u*u*u + Pg
-
-        # # Calculate the right hand side of the equations
-        # ddx_h = ddx(xx, u)
-        # ddx_m = ddx(xx, u*u)
-        # ddx_e = ddx(xx, u*u + Pg)
-
-        # # Calculate the new values of the variables
-        # u = u - dt*ddx_h
-        # u = u - dt*ddx_m
-        # u = u - dt*ddx_e
