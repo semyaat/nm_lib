@@ -32,7 +32,7 @@ def deriv_dnw(xx, hh, **kwargs):
         The downwind 2nd order derivative of hh respect to xx. Last 
         grid point is ill (or missing) calculated. 
     """
-    return (np.roll(hh, -1) - hh)/(np.roll(xx, -1) - xx)
+    return (np.roll(hh, -1) - hh) / (np.roll(xx, -1) - xx)
 
 def deriv_upw(xx, hh, **kwargs):
     r"""
@@ -123,6 +123,46 @@ def deriv_4tho(xx, hh, **kwargs):
 ### EXERCISE 2  ###
 ###################
 
+def cfl_adv_burger(a, x): 
+    """
+    Computes the dt_fact, i.e., Courant, Fredrich, and 
+    Lewy condition for the advective term in the Burger's eq. 
+
+    Parameters
+    ----------
+    a : `float` or `array`
+        Either constant, or array which multiply the right hand side of the Burger's eq.
+    x : `array`
+        Spatial axis. 
+
+    Returns
+    ------- 
+    `float`
+        min(dx/|a|)
+    """
+    dx = np.gradient(x) # x[1] - x[0]
+    return np.min(dx/np.abs(a))
+
+def cfl_diff_burger(a, x): 
+    r"""
+    Computes the dt_fact, i.e., Courant, Fredrich, and 
+    Lewy condition for the diffusive term in the Burger's eq. 
+
+    Parameters
+    ----------
+    a : `float` or `array` 
+        Either constant, or array which multiply the right hand side of the Burger's eq.
+    x : `array`
+        Spatial axis. 
+
+    Returns
+    -------
+    `float`
+        min(dx/|a|)
+    """
+    dx = np.gradient(x) # x[1] - x[0]
+    return np.min(dx**2 / (2*np.abs(a)))
+
 def step_adv_burgers(xx, hh, a, cfl_cut = 0.98, 
                     ddx = lambda x,y: deriv_dnw(x, y), **kwargs): 
     r"""
@@ -158,28 +198,6 @@ def step_adv_burgers(xx, hh, a, cfl_cut = 0.98,
     rhs = -a*ddx(xx, hh)
     return dt, rhs
 
-def cfl_adv_burger(a, x): 
-    """
-    Computes the dt_fact, i.e., Courant, Fredrich, and 
-    Lewy condition for the advective term in the Burger's eq. 
-
-    Parameters
-    ----------
-    a : `float` or `array`
-        Either constant, or array which multiply the right hand side of the Burger's eq.
-    x : `array`
-        Spatial axis. 
-
-    Returns
-    ------- 
-    `float`
-        min(dx/|a|)
-    """
-    dx = np.diff(x)    # x[1] - x[0]
-    if np.size(a) > 1:
-        a = a[:-1] 
-    return np.min(dx/np.abs(a))
-
 def step_uadv_burgers(xx, hh, cfl_cut = 0.98, 
                     ddx = lambda x,y: deriv_dnw(x, y), **kwargs): 
     r"""
@@ -210,33 +228,14 @@ def step_uadv_burgers(xx, hh, cfl_cut = 0.98,
     unnt : `array`
         right hand side of (u^{n+1}-u^{n})/dt = from burgers eq, i.e., x \frac{\partial u}{\partial x} 
     """
-    if 'a' in kwargs: 
+    if 'a' in kwargs:
         a = kwargs['a']
     else: 
         a = hh
-    dt = cfl_diff_burger(a[:-1], xx)*cfl_cut
+    dt = cfl_adv_burger(hh, xx)*cfl_cut
+    # dt = cfl_diff_burger(a[:-1], xx)*cfl_cut
     rhs = -a*ddx(xx, hh)
     return dt, rhs 
-
-def cfl_diff_burger(a,x): 
-    r"""
-    Computes the dt_fact, i.e., Courant, Fredrich, and 
-    Lewy condition for the diffusive term in the Burger's eq. 
-
-    Parameters
-    ----------
-    a : `float` or `array` 
-        Either constant, or array which multiply the right hand side of the Burger's eq.
-    x : `array`
-        Spatial axis. 
-
-    Returns
-    -------
-    `float`
-        min(dx/|a|)
-    """
-    dx = np.diff(x)    # x[1] - x[0]
-    return np.min(dx/np.abs(a))
 
 def evolv_adv_burgers(xx, hh, nt, a, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
@@ -301,6 +300,7 @@ def evolv_adv_burgers(xx, hh, nt, a, cfl_cut = 0.98,
 
     return t, unnt
 
+### XXX I believe the function beneath is wrong: 3a 
 def evolv_uadv_burgers(xx, hh, nt, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
         bnd_type='wrap', bnd_limits=[0,1], **kwargs):
@@ -360,6 +360,13 @@ def evolv_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
 
     return t, unnt
 
+
+
+###################
+### EXERCISE 4  ###
+###################
+
+# XXX Dont need the rhs - use dt directly? 
 def evolv_Lax_uadv_burgers(xx, hh, nt, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
         bnd_type='wrap', bnd_limits=[0,1], **kwargs):
@@ -549,7 +556,7 @@ def evolv_Rie_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
 
         halfstep = 0.5*(FL + FR) - 0.5*v_a*(uR - uL)
         rhs = ( halfstep - np.roll(halfstep, 1) ) / dx 
-        dt = cfl_diff_burger(v_a[:-1], xx)
+        dt = cfl_adv_burger(v_a, xx)
 
         ## Computes u(t+1)
         unnt_temp = unnt[:, i] - rhs*dt
@@ -621,7 +628,8 @@ def evolv_RieLax_uadv_burgers(xx, hh, nt, cfl_cut = 0.98,
 
         ## Compute the propagation speed v_a 
         v_a = np.max(np.array([np.abs(uL), np.abs(uR)]), axis=0)
-        dt = cfl_diff_burger(v_a[:-1], xx)
+        # dt = cfl_diff_burger(v_a[:-1], xx)
+        dt = cfl_adv_burger(v_a, xx)
 
         f_rie = 0.5*(FL + FR) - 0.5*v_a*(uR - uL)
 
@@ -1007,12 +1015,8 @@ def step_diff_burgers(xx, hh, a, ddx = lambda x,y: deriv_cent(x, y), **kwargs):
     `array`
         Right hand side of (u^{n+1}-u^{n})/dt = from burgers eq, i.e., x \frac{\partial u}{\partial x} 
     """
-    # dt = cfl_diff_burger(a[:-1], xx)
-    # rhs = a*(np.roll(hh, -1) - 2*hh - np.roll(hh, 1))
-
     dt = cfl_diff_burger(a, xx)
-    rhs = a * ddx(xx, ddx(xx, hh))
-    # rhs = a*ddx(xx, hh)
+    rhs = a*ddx(xx, ddx(xx, hh)) # no minus? 
     return dt, rhs 
 
 def NR_f(xx, un, uo, a, dt, **kwargs): 
@@ -1450,5 +1454,3 @@ def hyman_pred(f, fold, dfdt, a1, b1, a2, b2):
     f = tempvar
     
     return f, fold, fsav
-
-
