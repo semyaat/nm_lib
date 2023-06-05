@@ -725,12 +725,13 @@ def ops_Lax_LL_Add(xx, hh, nt, a, b, cfl_cut = 0.98,
         dt_u, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
         dt_v, rhs_v = step_adv_burgers(xx, unnt[:,i], b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
 
-        dt = dt_v - dt_u
+        dt = np.min([dt_v, dt_u]) * 0.5
+        dx = xx[1] - xx[0]
 
         ## Compute u(t+1)
-        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt
-        vnn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_v*dt
-        unnt_temp = unn + vnn - unnt[:,i]
+        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) - ((a*dt)/(2*dx) * (np.roll(unnt[:, i], -1) - np.roll(unnt[:, i], 1))) #+ rhs_u*dt
+        vnn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) - ((b*dt)/(2*dx) * (np.roll(unnt[:, i], -1) - np.roll(unnt[:, i], 1))) #+ rhs_v*dt
+        unnt_temp = unn + vnn - (0.5 * np.roll(unnt[:, i], -1) + 0.5 * np.roll(unnt[:, i], 1)) #- unnt[:,i]  # made stable by taking the surrounding half steps 
 
         ## Set the boundaries
         if bnd_limits[1] > 0: 
@@ -794,33 +795,37 @@ def ops_Lax_LL_Lie(xx, hh, nt, a, b, cfl_cut = 0.98,
     t = np.zeros(nt)
     unnt = np.zeros((len(xx), nt))
     unnt[:,0] = hh
+    vnnt = np.zeros((len(xx), nt))
+    vnnt[:,0] = hh
 
     for i in range(nt-1):
         dt_u = cfl_adv_burger(a, xx) * cfl_cut
         dt_v = cfl_adv_burger(b, xx) * cfl_cut
 
-        dt = np.min([dt_u, dt_v])
+        dt = np.min([dt_u, dt_v]) * 0.5
+        dx = xx[1] - xx[0]
 
-        _, rhs_u = step_adv_burgers(xx, unnt[:,i], a=a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
-        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt
+        # _, rhs_u = step_adv_burgers(xx, unnt[:,i], a=a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        unnt[:, i] = 0.5*(np.roll(vnnt[:,i], -1) + np.roll(vnnt[:,i], 1)) - ((a*dt) / (2*dx) * (np.roll(vnnt[:, i], -1) - np.roll(vnnt[:, i], 1))) #+ rhs_u*dt
 
         # v(t^n) = u(t^n+1)
-        _, rhs_v = step_adv_burgers(xx, unn, a=b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
-        vnn = 0.5*(np.roll(unn, -1) + np.roll(unn, 1)) + rhs_v*dt
+        # _, rhs_v = step_adv_burgers(xx, unn, a=b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        vnnt[:, i] = 0.5*(np.roll(unnt[:, i], -1) + np.roll(unnt[:, i], 1)) - ((b*dt) / (2*dx) * (np.roll(unnt[:, i], -1) - np.roll(unnt[:, i], 1))) #+ rhs_v*dt
 
+        unnt_temp = vnnt[:, i]
 
         ## Set the boundaries
-        unnt_temp = unn + vnn - unnt[:,i]
+        # unnt_temp = unn + vnn - unnt[:,i]
         if bnd_limits[1] > 0: 
             unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
         else: 
             unnt1_temp = unnt_temp[bnd_limits[0]:]                # upwind
         
         ## Update in time 
-        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+        vnnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
         t[i+1]      = t[i] + dt 
 
-    return t, unnt
+    return t, vnnt
 
 def ops_Lax_LL_Strang(xx, hh, nt, a, b, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
@@ -873,35 +878,43 @@ def ops_Lax_LL_Strang(xx, hh, nt, a, b, cfl_cut = 0.98,
     t = np.zeros(nt)
     unnt = np.zeros((len(xx), nt))
     unnt[:,0] = hh
+    vnnt = np.zeros((len(xx), nt))
+    vnnt[:,0] = hh
+    wnnt = np.zeros((len(xx), nt))
+    wnnt[:,0] = hh
 
     for i in range(nt-1):
         dt_u = cfl_adv_burger(a, xx) * cfl_cut
         dt_v = cfl_adv_burger(b, xx) * cfl_cut
 
-        dt = np.min([dt_u, dt_v])
+        dt = np.min([dt_u, dt_v]) * 0.5 # half a timestep 
+        dx = xx[1] - xx[0]
 
-        _, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
-        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt*0.5 #half a timestep
+        unnt[:, i] = 0.5*(np.roll(wnnt[:, i], -1) + np.roll(wnnt[:, i], 1)) - ((a*dt) / (4*dx) * (np.roll(wnnt[:, i], -1) - np.roll(wnnt[:, i], 1))) 
+        vnnt[:, i] = 0.5*(np.roll(unnt[:, i], -1) + np.roll(unnt[:, i], 1)) - ((b*dt) / (2*dx) * (np.roll(unnt[:, i], -1) - np.roll(unnt[:, i], 1)))
+        wnnt[:, i] = 0.5*(np.roll(vnnt[:, i], -1) + np.roll(vnnt[:, i], 1)) - ((a*dt) / (4*dx) * (np.roll(vnnt[:, i], -1) - np.roll(vnnt[:, i], 1)))
 
+        # _, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        # unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt*0.5 #half a timestep
         # v(t^n) = u(t^n+1)
-        _, rhs_v = step_adv_burgers(xx, unn[i], b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
-        vnn = 0.5*(np.roll(unn, -1) + np.roll(unn, 1)) + rhs_v*dt
+        # _, rhs_v = step_adv_burgers(xx, unn[i], b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        # vnn = 0.5*(np.roll(unn, -1) + np.roll(unn, 1)) + rhs_v*dt
 
-        dt_w, rhs_w = step_adv_burgers(xx, vnn, a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
-        wnn = 0.5*(np.roll(vnn, -1) + np.roll(vnn, 1)) + rhs_w*dt_w*0.5 #half a timestep
+        # dt_w, rhs_w = step_adv_burgers(xx, vnn, a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        # wnn = 0.5*(np.roll(vnn, -1) + np.roll(vnn, 1)) + rhs_w*dt_w*0.5 #half a timestep
 
         ## Set the boundaries
-        unnt_temp = wnn
+        unnt_temp = wnnt[:, i]
         if bnd_limits[1] > 0: 
             unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
         else: 
             unnt1_temp = unnt_temp[bnd_limits[0]:]                # upwind
         
         ## Update in time 
-        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
-        t[i+1]      = t[i] + dt 
+        wnnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+        t[i+1]      = t[i] + dt
 
-    return t, unnt
+    return t, wnnt
 
 def osp_Lax_LH_Strang(xx, hh, nt, a, b, cfl_cut = 0.98, 
         ddx = lambda x,y: deriv_dnw(x, y), 
@@ -954,40 +967,47 @@ def osp_Lax_LH_Strang(xx, hh, nt, a, b, cfl_cut = 0.98,
     t = np.zeros(nt)
     unnt = np.zeros((len(xx), nt))
     unnt[:,0] = hh
+    vnnt = np.zeros((len(xx), nt))
+    vnnt[:,0] = hh
+    wnnt = np.zeros((len(xx), nt))
+    wnnt[:,0] = hh
 
     for i in range(nt-1):
-        dt = cfl_adv_burger(a, xx) # need common timestep??? maybe
+        # dt_u, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        # dt_v, rhs_v = step_adv_burgers(xx, unnt[:,i], b, cfl_cut = cfl_cut, ddx = ddx, **kwargs) # v(t^n) = u(t^n+1)
+        # dt_w, rhs_w = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        # dt = np.min([dt_u, dt_v, dt_w]) * 0.5 # half a timestep
 
-        dt_u, rhs_u = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
-        unn = 0.5*(np.roll(unnt[:,i], -1) + np.roll(unnt[:,i], 1)) + rhs_u*dt_u*0.5 #half a timestep
+        dt_u = cfl_adv_burger(a, xx) * cfl_cut
+        dt_v = cfl_adv_burger(b, xx) * cfl_cut
+        dt = np.min([dt_u, dt_v]) * 0.5 # half a timestep 
+        dx = xx[1] - xx[0]
 
-        # v(t^n) = u(t^n+1)
-        dt_v, rhs_v = step_adv_burgers(xx, unn, b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        unnt[:, i] = 0.5*(np.roll(wnnt[:, i], -1) + np.roll(wnnt[:, i], 1)) - ((a*dt) / (4*dx) * (np.roll(wnnt[:, i], -1) - np.roll(wnnt[:, i], 1))) 
+        vnnt[:, i] = 0.5*(np.roll(unnt[:, i], -1) + np.roll(unnt[:, i], 1)) - ((b*dt) / (2*dx) * (np.roll(unnt[:, i], -1) - np.roll(unnt[:, i], 1)))
 
         # Hyman predictor-corrector scheme
         if i == 0: # First step 
-            unn, uold, dt_v = hyman(xx, unn, dt, b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+            vnnt[:, i], uold, dt_v = hyman(xx, unnt[:, i], dt, b, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
         else: # The rest of the steps 
-            unn, uold, dt_v = hyman(xx, unn, dt, b, cfl_cut = cfl_cut, ddx = ddx, fold = uold, dtold = dt_v, **kwargs)
+            vnnt[:, i], uold, dt_v = hyman(xx, unnt[:, i], dt, b, cfl_cut = cfl_cut, ddx = ddx, fold = uold, dtold = dt_v, **kwargs)
 
-
-        vnn = 0.5*(np.roll(unn, -1) + np.roll(unn, 1)) + rhs_v*dt_v # full timestep 
-
-        dt_w, rhs_w = step_adv_burgers(xx, vnn, a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
-        wnn = 0.5*(np.roll(vnn, -1) + np.roll(vnn, 1)) + rhs_w*dt_w*0.5 #half a timestep
+        # dt_w, rhs_w = step_adv_burgers(xx, unnt[:,i], a, cfl_cut = cfl_cut, ddx = ddx, **kwargs)
+        wnnt[:, i] = 0.5*(np.roll(vnnt[:, i], -1) + np.roll(vnnt[:, i], 1)) - ((a*dt) / (4*dx) * (np.roll(vnnt[:, i], -1) - np.roll(vnnt[:, i], 1)))
 
         ## Set the boundaries
-        unnt_temp = wnn
+        unnt_temp = wnnt[:,i]
         if bnd_limits[1] > 0: 
             unnt1_temp = unnt_temp[bnd_limits[0]:-bnd_limits[1]]  # downwind and central
         else: 
             unnt1_temp = unnt_temp[bnd_limits[0]:]                # upwind
         
         ## Update in time 
-        unnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
-        t[i+1]      = t[i] + dt 
+        wnnt[:,i+1] = np.pad(unnt1_temp, bnd_limits, bnd_type)
+        t[i+1]      = t[i] + dt
 
-    return t, unnt
+    return t, wnnt
+
 
 ###################
 ### EXERCISE 5.2 ##
@@ -1454,3 +1474,89 @@ def hyman_pred(f, fold, dfdt, a1, b1, a2, b2):
     f = tempvar
     
     return f, fold, fsav
+
+
+
+###################
+##### Project #####
+###################
+from scipy.optimize import fsolve
+
+def sod_shock_tube_analytical(x, t_end, gamma, init):
+
+    Pg_L = init[0]
+    Pg_R = init[1]
+    rho_L = init[2]
+    rho_R = init[3]
+    
+    # Constants 
+    c1 = np.sqrt(gamma*Pg_L/rho_L) # Sound speed left 
+    c4 = np.sqrt(gamma*Pg_R/rho_R) # Sound speed right 
+    u1 = 0
+    u4 = 0
+
+    beta = (gamma - 1)/(2*gamma)
+    Gamma = (gamma - 1)/(gamma + 1)
+
+    ratio = lambda P34: ( (1 \
+            + ((u1 - u4)*(gamma - 1)/(2*c1)) \
+            - ((gamma - 1)*(c4/c1)*(P34 - 1)/np.sqrt(2*gamma*((gamma - 1) + (gamma + 1)*P34))))**(beta**(-1)) \
+            )/P34 - (Pg_R/Pg_L)
+
+    P34 = fsolve(ratio, 5)[0]
+    if np.isclose(ratio(P34), 0) == False:
+        print('Warning: P34 not calculated correctly!')
+
+    Pg_3 = P34*Pg_R
+    rho34 = ((Gamma**(-1)) + P34) / (1 + (Gamma**(-1)))
+    rho_3 = rho_R*((Pg_3 + Gamma*Pg_R) / (Pg_R + Gamma*Pg_3))
+
+    Pg_2 = Pg_3
+
+    u3 = u4 + c4/gamma*P34*((2*gamma/(gamma + 1))/(P34 + (Gamma)))**0.5 # u2 = u3 ? 
+    u2 = u1 + 2*c1/(gamma - 1)*(1 - (Pg_2/Pg_L)**(beta))
+
+    rho_2 = rho_L*(Pg_2/Pg_L)**(1/gamma)
+
+    c3 = np.sqrt(gamma*Pg_3/rho_3)
+    c2 = np.sqrt(gamma*Pg_2/rho_2)
+
+    # Set boundaries for x-grid 
+    x1 = 0.5 + (u1 - c1)*t_end 
+    x2 = 0.5 + (u2 + u4 - c2)*t_end 
+    x3 = 0.5 + (u2 + u4)*t_end
+    x4 = 0.5 + (c4*np.sqrt(beta + (gamma + 1)/(2*gamma)*P34) + u4)*t_end
+
+    l = len(x)
+    x_grid = np.linspace(x1, x2, len(x[int(x1*len(x)):int(x2*len(x))]))
+
+    # Rarefraction wave
+    u_rare = 2/(gamma + 1)*(c1 + (x_grid - 0.5)/t_end)
+    rho_rare = rho_L*(1 - ((gamma - 1)/2 * u_rare/c1))**(2/(gamma - 1))
+    Pg_rare = Pg_L*(1 - (gamma - 1)/2 * u_rare/c1)**(2/(gamma - 1))
+
+    # Initialize the grids
+    rho_grid = np.zeros(len(x))
+    u_grid = np.zeros(len(x))
+    e_grid = np.zeros(len(x))
+
+    # Insert boundary values: 
+    rho_grid[:int(x1*l)] = rho_L
+    rho_grid[int(x1*l):int(x2*l)] = rho_rare
+    rho_grid[int(x2*l):int(x3*l)] = rho_2
+    rho_grid[int(x3*l):int(x4*l)] = rho_3
+    rho_grid[int(x4*l):] = rho_R
+
+    u_grid[:int(x1*l)] = u1*rho_L
+    u_grid[int(x1*l):int(x2*l)] = u_rare*rho_rare
+    u_grid[int(x2*l):int(x3*l)] = u2*rho_2
+    u_grid[int(x3*l):int(x4*l)] = u2*rho_3
+    u_grid[int(x4*l):] = u4*rho_R
+
+    e_grid[:int(x1*l)] = 0.5*rho_L*u1**2 + Pg_L/(gamma-1)
+    e_grid[int(x1*l):int(x2*l)] = 0.5*rho_rare*u_rare**2 + Pg_rare/(gamma-1)
+    e_grid[int(x2*l):int(x3*l)] = 0.5*rho_2*u2**2 + Pg_2/(gamma-1)
+    e_grid[int(x3*l):int(x4*l)] = 0.5*rho_3*u2**2 + Pg_3/(gamma-1)
+    e_grid[int(x4*l):] = 0.5*rho_R*u4**2 + Pg_R/(gamma-1)
+    
+    return rho_grid, u_grid, e_grid
