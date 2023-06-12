@@ -1314,8 +1314,8 @@ def Newton_Raphson_u(xx, hh, dt, nt, toll= 1e-5, ncount=2,
 
 def tau_sts(nu, n, dt_cfl): 
     a = n / (2 * np.sqrt(nu))
-    b1 = (1 + np.sqrt(nu)) ** 2*n - (1 - np.sqrt(nu)) ** 2*n
-    b2 = (1 + np.sqrt(nu)) ** 2*n + (1 - np.sqrt(nu)) ** 2*n
+    b1 = (1 + np.sqrt(nu))**2 * n - (1 - np.sqrt(nu))**2 * n
+    b2 = (1 + np.sqrt(nu))**2 * n + (1 - np.sqrt(nu))**2 * n
     dt_sts = a * (b1/b2) * dt_cfl
     return dt_sts
 
@@ -1560,3 +1560,324 @@ def sod_shock_tube_analytical(x, t_end, gamma, init):
     e_grid[int(x4*l):] = 0.5*rho_R*u4**2 + Pg_R/(gamma-1)
     
     return rho_grid, u_grid, e_grid
+
+
+
+
+def evol_hd_sts(xx, rho, u, Tg, gamma=5/3, kappa=0, kB=1, mH=1, nt=1000, cfl_cut=0.48, \
+                    ddx=lambda x,y: deriv_cent(x, y), bnd_type='wrap', bnd_limits=[1,1], \
+                        nu=0.05, S=lambda x, t: 0, g=0, **kwargs): 
+    """
+    Evolve the hydrodynamical system nt steps in time, 
+    including thermal conduction and a possible source term 
+    with the super timestepping method.
+
+    Parameters
+    ----------
+        xx : `array`
+            Spatial axis. 
+        rho : `array`
+            Initial density.
+        u : `array`
+            Initial velocity.
+        Tg : `array`
+            Initial temperature.
+        gamma : `float`
+            Adiabatic index.
+        kappa : `float`
+            Thermal conduction coefficient.
+        kb : `float`
+            Boltzmann constant.
+        mh : `float`
+            Mass of hydrogen atom.
+        nt : `int`
+            Number of timesteps.
+        cfl_cut : `float`
+            CFL condition to limit the timestep. 
+        ddx : `function`
+            Derivative method.
+        bnd_type : `str`
+            Boundary type.
+        bnd_limits : `list`
+            Boundary limits.
+        nu : `float`
+            Dampening factor between 0 and 1
+        n_sts : `int`
+            Number of super timesteps, positive 
+        S : `function`
+            Source term.
+
+    Returns
+    -------
+        t : `array`
+            Time axis.
+        rho_arr : `array`
+            Density evolution.
+        mom_arr : `array`
+            Momentum evolution.
+        e_arr : `array`
+            Energy evolution.
+    """
+
+    eps = 1e-6 # to avoid division by zero
+
+    ## Declare the arrays ##
+    t = np.zeros((nt))               # time
+    rx_arr = np.zeros((len(xx), nt)) # density
+    px_arr = np.zeros((len(xx), nt)) # momentum
+    e_arr1 = np.zeros((len(xx), nt)) # energy without thermal conduction
+    e_arr2 = np.zeros((len(xx), nt)) # energy with thermal conduction
+    e_arr  = np.zeros((len(xx), nt)) # energy
+    
+    ## Initialize variables ##
+    rx_arr[:,0] = rho
+    px_arr[:,0] = rho*u          # Momentum        from u = p/rho 
+    Pg          = rho*kB*Tg/mH   # Gas pressure    from Pg = n*kB*Tg where n = rho/mH
+    e_arr[:,0]  = Pg/(gamma - 1) # Internal energy from Pg = (gamma - 1)*e
+
+    ## Evolve the system in time ##
+    for i in range(nt - 1): 
+        
+        ## Update variables ##
+        u  = px_arr[:,i]/(rx_arr[:,i] + eps)                 # Velocity
+        Tg = e_arr[:,i]*mH*(gamma - 1) / (kB*rx_arr[:,i])    # Gas temperature
+        Pg = rx_arr[:,i]*kB*Tg / mH                          # Gas pressure
+        cs = np.sqrt(np.abs(gamma*Pg / (rx_arr[:,i] + eps))) # Sound speed 
+        S_arr = S(xx, i)
+
+        ## CFL condition ##
+        dt1 = np.min(np.gradient(xx)    / np.abs(u + eps))         # Eigenvalue u 
+        dt2 = np.min(np.gradient(xx)    / np.abs(u - cs + eps))    # Eigenvalue u - c_s
+        dt3 = np.min(np.gradient(xx)    / np.abs(u + cs + eps))    # Eigenvalue u + c_s
+        dt4 = np.min(np.gradient(xx)**2 / np.abs((2*kappa) + eps)) # Thermal conduction term
+
+        dt_cfl = np.min(np.array([dt1, dt2, dt3]))
+        n_sts = np.int(np.sqrt(dt_cfl/ dt4) + 1)   # dt_cfl/ dt4 > 1
+        dt_sts = tau_sts(nu, n_sts, dt4)
+
+        dt = cfl_cut*np.min(np.array([dt_cfl, dt_sts]))    # Final timestep
+
+        # n_sts = 10
+        # dt_cfl = np.min(np.array([dt1, dt2, dt3, dt4]))
+        # # can find which n_sts to use in order to get dt_sts to match dt_cfl
+        # dt_sts = tau_sts(nu, n_sts, dt_cfl)
+
+        ###--- Time evolution for density and momentum ---###
+
+        ## Spatially averaged variables ##
+        rx_Lax = (np.roll(rx_arr[:,i], -1) + rx_arr[:,i] + np.roll(rx_arr[:,i], 1)) / 3
+        px_Lax = (np.roll(px_arr[:,i], -1) + px_arr[:,i] + np.roll(px_arr[:,i], 1)) / 3
+
+        ## RHS of the HD equations ##
+        rhs_rx = -ddx(xx, rx_arr[:,i]*u)                       # Continuity equation
+        rhs_px  = -ddx(xx, px_arr[:,i]*u + Pg) - rx_arr[:,i]*g  # Momentum balance
+
+        rx_t = rx_Lax + rhs_rx*dt # Density
+        px_t = px_Lax + rhs_px*dt  # Momentum
+            
+        # Boundary conditions: 
+        if bnd_limits[1] > 0:  # downwind or centered scheme
+            rx_Bc = rx_t[bnd_limits[0]: -bnd_limits[1]]
+            px_Bc = px_t[bnd_limits[0]: -bnd_limits[1]]
+        else:
+            rx_Bc = rx_t[bnd_limits[0]:]  # upwind
+            px_Bc = px_t[bnd_limits[0]:]
+        
+        ## Update arrays with boundary conditions ##
+        rx_arr[:,i+1] = np.pad(rx_Bc, bnd_limits, bnd_type)
+        px_arr[:,i+1] = np.pad(px_Bc, bnd_limits, bnd_type)
+
+    ###--- Time evolution for energy (Operator Splitting) ---###
+
+        if np.abs(kappa) > 0: # Thermal conduction 
+            
+            ## Spatially averaged variables ## 
+            e_Lax1 = (np.roll(e_arr[:,i], -1) + e_arr[:,i] + np.roll(e_arr[:,i], 1)) / 3
+
+            ## RHS of the HD energy equation (no thermal conduction) ##
+            rhs_energy1 =  -ddx(xx, e_arr[:,i]*u) - Pg*ddx(xx, u) + S_arr # energy balance 1
+
+            e_t1 = e_Lax1 + rhs_energy1*dt # Energy
+
+            # Boundary conditions: 
+            if bnd_limits[1] > 0:  # downwind or centered scheme
+                e_Bc1 = e_t1[bnd_limits[0]: -bnd_limits[1]]
+            else:
+                e_Bc1 = e_t1[bnd_limits[0]:]
+            
+            ## Update arrays with boundary conditions ##
+            e_arr1[:,i+1] = np.pad(e_Bc1, bnd_limits, bnd_type)
+
+            ### Super timesteppig for thermal conduction ###
+
+            ## Declare the arrays ##
+            e_sts = np.zeros((np.size(xx), n_sts))
+            t_sts = np.zeros((n_sts))
+
+            ## Initialize variables ##
+            e_sts[:,0] = e_arr[:,i]
+
+            ## Evolve the system in time ##
+            for j in range(n_sts-1):
+                ## Initialize variables based on the previous super-timesteps ##
+                dtj = dt_cfl*taui_sts(nu, n_sts, j)
+                # Tg_sts = e_sts[:,j]*mH*(gamma - 1) / kB # XXX 
+                Tg_sts = e_sts[:,j]*mH*(gamma - 1) / (kB*rx_arr[:,i])
+                
+                ## Spatially averaged variables ##
+                e_Lax2 = (np.roll(e_sts[:,j], -1) + e_sts[:,j]  + np.roll(e_sts[:,j], 1)) / 3
+
+                ## RHS of the HD equations ##
+                rhs_energy2 = kappa*ddx(xx, ddx(xx, Tg_sts)) 
+
+                e_t2 = e_Lax2 + rhs_energy2*dtj # Energy
+
+                # Boundary conditions: 
+                if bnd_limits[1] > 0:  # downwind or centered scheme
+                    e_Bc2 = e_t2[bnd_limits[0]: -bnd_limits[1]]
+                else:
+                    e_Bc2 = e_t2[bnd_limits[0]:]
+                
+                ## Update arrays with boundary conditions ##
+                e_sts[:,j+1] = np.pad(e_Bc2, bnd_limits, bnd_type)
+                t_sts[j+1]   = t_sts[j] + dtj
+            
+            ## Variable update for normal stepping ##
+            e_arr2[:,i+1] = e_sts[:, n_sts-1]
+
+            ## Adding the advances in the operator split to get the full time advance ##
+            e_arr[:,i+1] = e_arr1[:,i+1] + e_arr2[:,i+1] - ((np.roll(e_arr[:,i],1) + e_arr[:,i] + np.roll(e_arr[:,i],-1)) / 3)
+            t[i+1]       = t[i] + np.sum(dt)
+
+        else: # No Thermal Conduction
+
+            ## Spatially averaged variables ## 
+            e_Lax = (np.roll(e_arr[:,i], -1) + e_arr[:,i] + np.roll(e_arr[:,i], 1)) / 3
+
+            ## RHS of the HD equations ##
+            rhs_energy = -ddx(xx, e_arr[:,i]*u) - Pg*ddx(xx, u) + S_arr
+
+            e_t = e_Lax + rhs_energy*dt # Energy
+            
+            # Boundary conditions:
+            if bnd_limits[1] > 0:  # downwind or centered scheme
+                e_Bc = e_t[bnd_limits[0]: -bnd_limits[1]]
+            else:
+                e_Bc = e_t[bnd_limits[0]:]
+            
+            ## Update arrays witn boundary conditions ##
+            e_arr[:,i+1] = np.pad(e_Bc, bnd_limits, bnd_type)
+            t[i+1]       = t[i] + dt
+
+    return t, rx_arr, px_arr, e_arr
+
+
+import matplotlib.pyplot as plt 
+
+def plot_hd_init(xx, density, velocity, temperature, pressure, energy, \
+                    source_function=None): 
+    """ 
+    Function for plotting the initial values for the density, velocity, 
+    temperature, pressure and energy. 
+
+    Parameters 
+    ----------
+    xx : `array`
+        Spatial axis. 
+    density: `array`
+        1D array of the density.
+    velocity: `array`
+        1D array of the velocity.
+    temperature: `array`
+        1D array of the temperature.
+    pressure: `array`
+        1D array of the pressure.
+    energy: `array`
+        1D array of the energy.
+
+    Returns
+    -------
+        A 6 panel plot of the initial values for the density, velocity, 
+        temperature, pressure and energy. 
+    """
+    dpi = 200 
+
+    fig, ax = plt.subplots(3, 2, figsize=(12,12), dpi=dpi)
+
+    ax[0,0].plot(xx, density, color='mediumpurple', label="Density")
+    ax[0,0].set_xlabel("x", fontsize=14)
+    ax[0,0].grid()
+    ax[0,0].set_title("Density", fontsize=14)
+
+    ax[0,1].plot(xx, velocity, color='green', label="Velocity")
+    ax[0,1].set_xlabel("x", fontsize=14)
+    ax[0,1].grid()
+    ax[0,1].set_title("Velocity", fontsize=14)
+
+    ax[1,0].plot(xx, temperature, color='orange', label="Temperature")
+    ax[1,0].set_xlabel("x", fontsize=14)
+    ax[1,0].grid()
+    ax[1,0].set_title("Temperature",fontsize=14)
+
+    ax[1,1].plot(xx, pressure, color='blue', label="Pressure")
+    ax[1,1].set_xlabel("x", fontsize=14)
+    ax[1,1].grid()
+    ax[1,1].set_title("Pressure",fontsize=14)
+
+    ax[2,0].plot(xx, energy, color='cyan', label="Energy")
+    ax[2,0].set_xlabel("x", fontsize=14)
+    ax[2,0].grid()
+    ax[2,0].set_title("Energy",fontsize=14)
+
+    ax[2,0].plot(xx, energy, color='cyan', label="Energy")
+    ax[2,0].set_xlabel("x", fontsize=14)
+    ax[2,0].grid()
+    ax[2,0].set_title("Energy",fontsize=14)
+
+    if source_function is not None: 
+        ax[2,1].plot(xx, source_function, color='red', label="S(x,t)")
+        ax[2,1].set_xlabel("x", fontsize=14)
+        ax[2,1].grid()
+        ax[2,1].set_title("Source Function",fontsize=14)
+    else: 
+        ax[2,1].plot(xx, density, color='mediumpurple', label="density")
+        ax[2,1].plot(xx, velocity, color='green', label="velocity")
+        ax[2,1].plot(xx, temperature, color='orange', label="temperature")
+        ax[2,1].plot(xx, pressure, color='blue', linestyle='dotted', label="pressure")
+        ax[2,1].plot(xx, energy, color='cyan', label="energy")
+        ax[2,1].set_xlabel("x", fontsize=14)
+        ax[2,1].grid()
+        ax[2,1].set_title("All", fontsize=14)
+        ax[2,1].legend(loc='lower right', fontsize=14)
+
+    plt.tight_layout()
+
+
+def plot_hd_evolv(xx, density, velocity, temperature, pressure, energy, \
+                    source_function=None, plot=None): 
+    """ 
+    Function for plotting the values for the density, velocity, 
+    temperature, pressure and energy, over time. 
+
+    Parameters 
+    ----------
+    xx : `array`
+        Spatial axis. 
+    density: `array`
+        1D array of the density.
+    velocity: `array`
+        1D array of the velocity.
+    temperature: `array`
+        1D array of the temperature.
+    pressure: `array`
+        1D array of the pressure.
+    energy: `array`
+        1D array of the energy.
+
+    Returns
+    -------
+        A 6 panel plot or video of the initial values for the density, velocity, 
+        temperature, pressure and energy. 
+    """
+
+    return 0
