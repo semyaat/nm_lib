@@ -1652,15 +1652,22 @@ def evol_hd_sts(xx, rho, u, Tg, gamma=5/3, kappa=0, kB=1, mH=1, nt=1000, cfl_cut
         dt4 = np.min(np.gradient(xx)**2 / np.abs((2*kappa) + eps)) # Thermal conduction term
 
         dt_cfl = np.min(np.array([dt1, dt2, dt3]))
-        n_sts = np.int(np.sqrt(dt_cfl/ dt4) + 1)   # dt_cfl/ dt4 > 1
+        n_sts = np.int(np.sqrt(dt_cfl/ dt4) + 1) # dt_cfl/ dt4 > 1
         dt_sts = tau_sts(nu, n_sts, dt4)
 
-        dt = cfl_cut*np.min(np.array([dt_cfl, dt_sts]))    # Final timestep
+        dt = cfl_cut*np.min(np.array([dt_cfl, dt_sts])) # Final timestep
 
-        # n_sts = 10
+        # # n_sts = 10
         # dt_cfl = np.min(np.array([dt1, dt2, dt3, dt4]))
         # # can find which n_sts to use in order to get dt_sts to match dt_cfl
+        # for n_sts in range(1, 100):
+        #     if np.isclose(dt_cfl, tau_sts(nu, n_sts, dt_cfl), rtol=1e-3):
+        #         print(dt_cfl)
+        #         break
+        #     else: 
+        #         n_sts = 10
         # dt_sts = tau_sts(nu, n_sts, dt_cfl)
+        # dt = cfl_cut*np.min(np.array([dt_cfl, dt_sts]))    # Final timestep
 
         ###--- Time evolution for density and momentum ---###
 
@@ -1720,7 +1727,7 @@ def evol_hd_sts(xx, rho, u, Tg, gamma=5/3, kappa=0, kB=1, mH=1, nt=1000, cfl_cut
             ## Evolve the system in time ##
             for j in range(n_sts-1):
                 ## Initialize variables based on the previous super-timesteps ##
-                dtj = dt_cfl*taui_sts(nu, n_sts, j)
+                dtj = dt*taui_sts(nu, n_sts, j+1)
                 # Tg_sts = e_sts[:,j]*mH*(gamma - 1) / kB # XXX 
                 Tg_sts = e_sts[:,j]*mH*(gamma - 1) / (kB*rx_arr[:,i])
                 
@@ -1852,9 +1859,16 @@ def plot_hd_init(xx, density, velocity, temperature, pressure, energy, \
 
     plt.tight_layout()
 
+from matplotlib import animation
+from IPython.display import clear_output
+from IPython.display import Video
+from matplotlib.animation import FuncAnimation
+from matplotlib.ticker import FormatStrFormatter
+from IPython.display import HTML
 
-def plot_hd_evolv(xx, density, velocity, temperature, pressure, energy, \
-                    source_function=None, plot=None): 
+def plot_hd_evolv(xx, t, nt, rhot, u, Tg, Pg, et, S=0, M=1, run='plot',
+    fps=10, width=800, yscl='', gamma=5/3., title=''):
+
     """ 
     Function for plotting the values for the density, velocity, 
     temperature, pressure and energy, over time. 
@@ -1880,4 +1894,165 @@ def plot_hd_evolv(xx, density, velocity, temperature, pressure, energy, \
         temperature, pressure and energy. 
     """
 
-    return 0
+    nt = nt//M
+
+    scl1 = 0.999
+    scl2 = 1.001
+    dpi  = 300
+    eps = 1.e-10
+
+    c_s = np.sqrt(np.abs(gamma * Pg / (rhot + eps))) #sound speed
+
+    num = np.size(xx)
+    rho1 = scl1 * np.amin(rhot)
+    rho2 = scl2 * np.amax(rhot)
+
+    u1 = scl1 * np.amin(u)
+    u2 = scl2 * np.amax(u)
+
+    c_s1 = scl1 * np.amin(c_s)
+    c_s2 = scl2 * np.amax(c_s)
+
+    Tg1 = np.max([0,scl1 * np.amin(Tg)])
+    Tg2 = scl2 * np.amax(Tg)
+
+    Pg1 = scl1 * np.amin(Pg)
+    Pg2 = scl2 * np.amax(Pg)
+
+    et1 = scl1 * np.amin(et)
+    et2 = scl2 * np.amax(et)
+
+    ylim1 = scl1 * np.amin([rho1, u1, Tg1, Pg1, et1, c_s1])
+    ylim2 = scl2 * np.amax([rho2, u2, Tg2, Pg2, et2, c_s2])
+
+    fig, ax = plt.subplots(3,2,figsize=(12,12), dpi=dpi)
+
+    def init():
+        ax[0,0].plot(xx,rhot[:,0],'mediumpurple')
+        ax[0,1].plot(xx,u[:,0],'green')
+        ax[1,0].plot(xx,Tg[:,0],'orange')
+        ax[1,1].plot(xx,Pg[:,0],'blue')
+        ax[2,0].plot(xx,et[:,0],'cyan')
+        ax[2,1].plot(xx,et[:,0],'cyan')
+
+    def animate(i):
+        ax[0,0].clear()
+        ax[0,1].clear()
+        ax[1,0].clear()
+        ax[1,1].clear()
+        ax[2,0].clear()
+        ax[2,1].clear()
+
+
+        ax[0,0].plot(xx,rhot[:,::M][:,i],'mediumpurple',label="density")
+        ax[0,0].set_xlabel("x",fontsize=14)
+        ax[0,0].minorticks_on()
+        ax[0,0].grid(which='major')
+        ax[0,0].grid(which='minor',linestyle=':',alpha=0.5)
+        ax[0,0].set_title("Density",fontsize=14)
+        if yscl == 'log':
+            ax[0,0].set_yscale('log')
+        else:
+            ax[0,0].set_ylim([rho1, rho2])
+            ax[0,0].yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+        ax[0,1].plot(xx,u[:,::M][:,i],'green',label="velocity")
+        ax[0,1].plot(xx,c_s[:,::M][:,i],'red',label="sound speed")
+        ax[0,1].set_xlabel("x",fontsize=14)
+        ax[0,1].minorticks_on()
+        ax[0,1].grid(which='major')
+        ax[0,1].grid(which='minor',linestyle=':',alpha=0.5)
+        ax[0,1].legend()
+        ax[0,1].set_title("Velocity",fontsize=14)
+        if yscl == 'log':
+            ax[0,1].set_yscale('log')
+        else:
+            ax[0,1].set_ylim([u1, u2])
+            ax[0,1].yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+        ax[1,0].plot(xx,Tg[:,::M][:,i],'orange',label="temperature")
+        ax[1,0].set_xlabel("x",fontsize=14)
+        ax[1,0].minorticks_on()
+        ax[1,0].grid(which='major')
+        ax[1,0].grid(which='minor',linestyle=':',alpha=0.5)
+        ax[1,0].set_title("Temperature",fontsize=14)
+        if yscl == 'log':
+            ax[1,0].set_yscale('log')
+        else:
+            ax[1,0].set_ylim([Tg1, Tg2])
+            ax[1,0].yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+        ax[1,1].plot(xx,Pg[:,::M][:,i],'blue',label="pressure")
+        ax[1,1].set_xlabel("x",fontsize=14)
+        ax[1,1].minorticks_on()
+        ax[1,1].grid(which='major')
+        ax[1,1].grid(which='minor',linestyle=':',alpha=0.5)
+        ax[1,1].set_title("Pressure",fontsize=14)
+        if yscl == 'log':
+            ax[1,1].set_yscale('log')
+        else:
+            ax[1,1].set_ylim([Pg1, Pg2])
+            ax[1,1].yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+        ax[2,0].plot(xx,et[:,::M][:,i],'cyan',label="energy")
+        ax[2,0].set_xlabel("x",fontsize=14)
+        ax[2,0].minorticks_on()
+        ax[2,0].grid(which='major')
+        ax[2,0].grid(which='minor',linestyle=':',alpha=0.5)
+        ax[2,0].set_title("Energy",fontsize=14)
+        if yscl == 'log':
+            ax[2,0].set_yscale('log')
+        else:
+            ax[2,0].set_ylim([et1, et2])
+            ax[2,0].yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+        if isinstance(S, np.ndarray):
+            S1 = 0.99 * np.amin(S)
+            S2 = 1.01 * np.amax(S)
+            ax[2,1].plot(xx,S[:,::M][:,i],'m',label="source")
+            ax[2,1].set_xlabel("x",fontsize=14)
+            if yscl == 'log':
+                ax[2,1].set_yscale('log')
+            else:
+                ax[2,1].set_ylim([S1, S2])
+                ax[2,1].set_title("source",fontsize=14)
+            ax[2,1].minorticks_on()
+            ax[2,1].grid(which='major')
+            ax[2,1].grid(which='minor',linestyle=':',alpha=0.5)
+            ax[2,1].yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+        else:
+            ax[2,1].plot(xx, rhot[:,::M][:,i],'mediumpurple',label="density")
+            ax[2,1].plot(xx,u[:,::M][:,i],'green',label="velocity")
+            ax[2,1].plot(xx,c_s[:,::M][:,i],'red',label="sound speed")
+            ax[2,1].plot(xx,Tg[:,::M][:,i],'orange',label="temperature")
+            ax[2,1].plot(xx,Pg[:,::M][:,i],'blue',label="pressure")
+            ax[2,1].plot(xx,et[:,::M][:,i],'cyan',label="energy")
+            ax[2,1].set_xlabel("x",fontsize=14)
+            if yscl == 'log':
+                ax[2,1].set_yscale('log')
+            else:
+                ax[2,1].set_ylim([ylim1, ylim2])
+                ax[2,1].legend()
+            ax[2,1].minorticks_on()
+            ax[2,1].grid(which='major')
+            ax[2,1].grid(which='minor',linestyle=':',alpha=0.5)
+            ax[2,1].yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+        fig.suptitle(f'{title} \n\n t={t[::M][i]:.2f}, i={i}',fontsize=16)
+        #fig.suptitle((title+' t=%.2f, i=%d')%(t[i],i),fontsize=14)
+        plt.tight_layout()
+        plt.close()
+
+    def callback(i,n):
+        print(f'Saving frame {i} of {n}')
+        clear_output(wait=True) #can slow the output a bit?
+        return None
+
+    anim = FuncAnimation(fig, animate, interval=1, frames=nt, init_func=init)
+    writervideo = animation.FFMpegWriter(fps=fps)
+    figstr = run + '_'+ str(nt) + '_' + str (num) + '.mp4'
+    anim.save(figstr, writer=writervideo,progress_callback = callback)
+    print(f'Output movie path = {figstr}')
+    #return HTML(anim.to_jshtml())
+    #return fig
+    return Video(figstr,width=width)
