@@ -1,5 +1,6 @@
 import numpy as np 
 from nm_lib import nm_lib as nm
+import matplotlib.pyplot as plt
 
 x0 = -2.6 
 xf =  2.6 
